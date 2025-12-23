@@ -1,17 +1,19 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, ScrollView, ActivityIndicator, RefreshControl, TouchableOpacity } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, ActivityIndicator, RefreshControl, TouchableOpacity, ImageBackground } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
+import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
 import { Colors } from '@/constants/Colors';
-import { getCurrentWeather, getWeatherTips, WeatherData } from '@/services/weatherService';
+import { getCurrentWeather, WeatherData } from '@/services/weatherService';
 
 export default function CuacaScreen() {
   const [weather, setWeather] = useState<WeatherData | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
-  const [location, setLocation] = useState('Sukabumi');
 
   const loadWeather = async () => {
     try {
+      // Mengambil data cuaca + ramalan 7 hari dari service
       const weatherData = await getCurrentWeather();
       setWeather(weatherData);
     } catch (error) {
@@ -31,175 +33,341 @@ export default function CuacaScreen() {
     loadWeather();
   };
 
-  // Mock hourly forecast
-  const hourlyForecast = [
-    { time: '15.00', temp: '29°C', icon: 'sunny' },
-    { time: '16.00', temp: '26°C', icon: 'sunny' },
-    { time: '17.00', temp: '24°C', icon: 'cloudy', active: true },
-    { time: '18.00', temp: '23°C', icon: 'sunny' },
-  ];
-
-  // Mock next forecast
-  const nextForecast = [
-    { day: 'Monday', icon: 'rainy', high: '13°C', low: '10°C' },
-    { day: 'Tuesday', icon: 'stormy', high: '17°C', low: '12°C' },
-    { day: 'Wednesday', icon: 'partly-sunny', high: '20°C', low: '15°C' },
-    { day: 'Thursday', icon: 'sunny', high: '22°C', low: '17°C' },
-    { day: 'Friday', icon: 'cloudy', high: '19°C', low: '14°C' },
-    { day: 'Saturday', icon: 'rainy', high: '18°C', low: '13°C' },
-    { day: 'Sunday', icon: 'partly-sunny', high: '21°C', low: '16°C' },
-  ];
-
+  // Helper untuk mendapatkan icon yang sesuai (UPDATED)
   const getWeatherIcon = (condition: string) => {
-    const iconMap: { [key: string]: string } = {
-      'sunny': 'sunny',
-      'partly-sunny': 'partly-sunny-outline',
-      'cloudy': 'cloudy-outline',
-      'rainy': 'rainy-outline',
-      'stormy': 'thunderstorm-outline',
-    };
-    return iconMap[condition] || 'partly-sunny-outline';
+    // Normalisasi kondisi ke lowercase untuk matching
+    const cond = condition ? condition.toLowerCase() : '';
+
+    // Mapping yang lebih komprehensif
+    if (cond.includes('cerah') || cond.includes('sunny') || cond === 'clear') return 'sunny';
+    if (cond.includes('hujan') || cond.includes('rain')) return 'rainy';
+    if (cond.includes('berawan') || cond.includes('cloud')) return 'cloudy';
+    if (cond.includes('partly') || cond.includes('sebagian')) return 'partly-sunny';
+    if (cond.includes('badai') || cond.includes('storm') || cond.includes('petir')) return 'thunderstorm';
+    if (cond.includes('panas') || cond.includes('hot')) return 'thermometer'; // Ikon termometer untuk panas
+    if (cond.includes('dingin') || cond.includes('cold') || cond.includes('snow')) return 'snow';
+    
+    // Khusus icon malam (digunakan di hourly)
+    if (cond === 'moon') return 'moon';
+    if (cond === 'cloudy-night') return 'cloudy-night';
+
+    return 'partly-sunny'; // Default fallback
+  };
+
+  // Generate dynamic hourly forecast based on current time
+  const getHourlyForecast = (currentTemp: number, currentCondition: string) => {
+    const now = new Date();
+    const currentHour = now.getHours();
+    const forecast = [];
+
+    // Generate current hour + next 3 hours (Total 4 jam)
+    for (let i = 0; i < 4; i++) {
+      let nextHour = (currentHour + i) % 24; // Gunakan modulo untuk handle jam > 23
+      
+      // Format time (e.g., "14.00")
+      const timeString = `${nextHour.toString().padStart(2, '0')}.00`;
+      
+      let hourlyTemp;
+      let icon = 'cloudy'; // Default icon for hour
+      
+      // Kondisi dasar untuk jam ini (bisa berubah jika malam)
+      let baseCondition = currentCondition.toLowerCase();
+
+      // Cek apakah malam hari (18.00 - 05.00)
+      const isNight = nextHour >= 18 || nextHour <= 5;
+
+      if (i === 0) {
+        // Jam saat ini (index 0) harus sama persis dengan suhu utama
+        hourlyTemp = currentTemp;
+        
+        // Sesuaikan icon saat ini dengan waktu (siang/malam)
+        if (isNight && (baseCondition.includes('cerah') || baseCondition.includes('sunny'))) {
+            icon = 'moon';
+        } else if (isNight && (baseCondition.includes('berawan') || baseCondition.includes('cloud'))) {
+            icon = 'cloudy-night';
+        } else {
+            icon = getWeatherIcon(baseCondition); // Gunakan icon normal
+        }
+
+      } else {
+        // Jam berikutnya: variasi suhu & icon
+        let tempChange = 0;
+        if (nextHour >= 10 && nextHour <= 14) tempChange = 1; 
+        else if (isNight) tempChange = -2;
+        
+        hourlyTemp = Math.round(currentTemp + (Math.random() * 1.5 - 0.5) + (tempChange * 0.5));
+
+        // Logic icon hourly
+        if (baseCondition.includes('hujan') || baseCondition.includes('rain')) {
+           icon = 'rainy'; // Hujan tetap hujan (siang/malam)
+        } else if (baseCondition.includes('panas')) {
+           icon = isNight ? 'moon' : 'sunny'; // Panas malamnya cerah/bulan
+        } else if (baseCondition.includes('dingin') || baseCondition.includes('snow')) {
+           icon = 'snow';
+        } else if (baseCondition.includes('cerah') || baseCondition.includes('sunny')) {
+           icon = isNight ? 'moon' : 'sunny';
+        } else {
+           // Berawan / Default
+           icon = isNight ? 'cloudy-night' : 'partly-sunny';
+        }
+      }
+
+      forecast.push({
+        time: timeString,
+        temp: `${hourlyTemp}°`,
+        icon: icon, // Icon string yang sudah disesuaikan (moon, sunny, rainy, etc)
+        active: i === 0 
+      });
+    }
+    return forecast;
   };
 
   const getCurrentDate = () => {
-    const days = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
-    const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    const days = ['Minggu', 'Senin', 'Selasa', 'Rabu', 'Kamis', 'Jumat', 'Sabtu'];
+    const months = ['Jan', 'Feb', 'Mar', 'Apr', 'Mei', 'Jun', 'Jul', 'Agu', 'Sep', 'Okt', 'Nov', 'Des'];
     const now = new Date();
     return `${days[now.getDay()]}, ${now.getDate()} ${months[now.getMonth()]}`;
   };
 
   if (loading) {
     return (
-      <View style={styles.container}>
-        <View style={styles.loadingContainer}>
-          <ActivityIndicator size="large" color={Colors.primary} />
-          <Text style={styles.loadingText}>Memuat data cuaca...</Text>
-        </View>
+      <View style={styles.loadingContainer}>
+        <LinearGradient
+          colors={['#E8F5E9', '#C8E6C9', '#A5D6A7']}
+          style={styles.loadingGradient}
+        >
+          <View style={styles.loadingContent}>
+            <Ionicons name="leaf-outline" size={64} color="#2E7D32" />
+            <ActivityIndicator size="large" color="#2E7D32" style={{marginVertical: 20}} />
+            <Text style={styles.loadingText}>Memuat data cuaca...</Text>
+          </View>
+        </LinearGradient>
       </View>
     );
   }
 
+  // Fallback data jika weather null
   const currentWeather = weather || {
     temperature: 28,
-    condition: 'Partly Cloudy',
-    humidity: 6,
-    windSpeed: 19,
-    precipitation: 90,
+    condition: 'berawan',
+    label: 'Berawan',
+    humidity: 60,
+    windSpeed: 10,
+    precipitation: 10,
+    location: 'Memuat...',
+    icon: 'partly-sunny',
+    forecast: []
   };
+
+  // Generate dynamic hourly data
+  const hourlyData = getHourlyForecast(currentWeather.temperature, currentWeather.condition);
 
   return (
     <View style={styles.container}>
-      <ScrollView 
-        style={styles.scrollView}
-        refreshControl={
-          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
-        }
-        showsVerticalScrollIndicator={false}
+      {/* Background dengan tema alam */}
+      <LinearGradient
+        colors={['#E8F5E9', '#C8E6C9', '#A5D6A7']}
+        style={styles.backgroundGradient}
       >
+        
         {/* Header */}
-        <View style={styles.header}>
-          <Text style={styles.screenLabel}>cuaca</Text>
-          <View style={styles.locationHeader}>
-            <Ionicons name="location-outline" size={20} color={Colors.text} />
-            <Text style={styles.locationText}>{location}</Text>
-            <TouchableOpacity>
-              <Ionicons name="chevron-down-outline" size={20} color={Colors.textLight} />
-            </TouchableOpacity>
-          </View>
-        </View>
-
-        {/* Current Weather */}
-        <View style={styles.currentWeatherSection}>
-          <View style={styles.weatherIconContainer}>
-            <Ionicons 
-              name={getWeatherIcon('partly-sunny') as any} 
-              size={120} 
-              color={Colors.primary} 
-            />
-          </View>
-          
-          <Text style={styles.temperature}>{currentWeather.temperature}°</Text>
-          <Text style={styles.precipitationLabel}>Precipitations</Text>
-          
-          <View style={styles.tempRange}>
-            <Text style={styles.tempLabel}>Max.: {currentWeather.temperature + 3}°</Text>
-            <Text style={styles.tempLabel}>Min.: {currentWeather.temperature - 3}°</Text>
-          </View>
-        </View>
-
-        {/* Weather Details Bar */}
-        <View style={styles.detailsBar}>
-          <View style={styles.detailItem}>
-            <Ionicons name="water-outline" size={20} color={Colors.textLight} />
-            <Text style={styles.detailValue}>{currentWeather.humidity}%</Text>
-          </View>
-          <View style={styles.detailItem}>
-            <Ionicons name="rainy-outline" size={20} color={Colors.textLight} />
-            <Text style={styles.detailValue}>{currentWeather.precipitation}%</Text>
-          </View>
-          <View style={styles.detailItem}>
-            <Ionicons name="leaf-outline" size={20} color={Colors.textLight} />
-            <Text style={styles.detailValue}>{currentWeather.windSpeed} km/h</Text>
-          </View>
-        </View>
-
-        {/* Today's Hourly Forecast */}
-        <View style={styles.forecastCard}>
-          <View style={styles.forecastCardHeader}>
-            <Text style={styles.forecastCardTitle}>Today</Text>
-            <Text style={styles.forecastCardDate}>{getCurrentDate()}</Text>
-          </View>
-          <View style={styles.hourlyForecast}>
-            {hourlyForecast.map((hour, index) => (
-              <View 
-                key={index} 
-                style={[
-                  styles.hourlyItem,
-                  hour.active && styles.hourlyItemActive
-                ]}
-              >
-                <Text style={styles.hourlyTime}>{hour.time}</Text>
-                <Ionicons 
-                  name={getWeatherIcon(hour.icon) as any} 
-                  size={24} 
-                  color={hour.active ? Colors.primary : Colors.textLight} 
-                />
-                <Text style={[
-                  styles.hourlyTemp,
-                  hour.active && styles.hourlyTempActive
-                ]}>
-                  {hour.temp}
-                </Text>
+        <SafeAreaView edges={['top']}>
+          <View style={styles.header}>
+            <View style={styles.headerTop}>
+              <View style={styles.headerLeft}>
+                <View style={styles.iconContainer}>
+                  <Ionicons name="leaf-outline" size={20} color="#1B5E20" style={styles.leafIcon} />
+                </View>
+                <Text style={styles.screenLabel}>Cuaca Lokal</Text>
               </View>
-            ))}
+              <TouchableOpacity onPress={onRefresh} style={styles.refreshButton}>
+                <Ionicons name="refresh-circle" size={32} color="#2E7D32" />
+              </TouchableOpacity>
+            </View>
+            
+            <View style={styles.locationHeader}>
+              <Ionicons name="location" size={20} color="#1B5E20" />
+              <Text style={styles.locationText} numberOfLines={1}>
+                {currentWeather.location}
+              </Text>
+            </View>
           </View>
-        </View>
+        </SafeAreaView>
 
-        {/* Next Forecast */}
-        <View style={styles.forecastCard}>
-          <View style={styles.forecastCardHeader}>
-            <Text style={styles.forecastCardTitle}>Next Forecast</Text>
-            <Ionicons name="calendar-outline" size={20} color={Colors.textLight} />
+        <ScrollView 
+          style={styles.scrollView}
+          refreshControl={
+            <RefreshControl 
+              refreshing={refreshing} 
+              onRefresh={onRefresh}
+              tintColor="#2E7D32"
+              colors={['#2E7D32']}
+            />
+          }
+          showsVerticalScrollIndicator={false}
+        >
+          {/* Current Weather Card */}
+          <View style={styles.currentWeatherCard}>
+            <LinearGradient
+              colors={['#4CAF50', '#2E7D32']}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 1 }}
+              style={styles.currentWeatherGradient}
+            >
+              <View style={styles.currentWeatherContent}>
+                <View style={styles.weatherMainInfo}>
+                  <View>
+                    <Text style={styles.currentDate}>{getCurrentDate()}</Text>
+                    <Text style={styles.temperature}>{currentWeather.temperature}°</Text>
+                    <Text style={styles.weatherCondition}>
+                      {(currentWeather as any).label || currentWeather.condition}
+                    </Text>
+                  </View>
+                  <Ionicons 
+                    name={currentWeather.icon as any} 
+                    size={80} 
+                    color="#FFFFFF" 
+                  />
+                </View>
+                
+                <View style={styles.tempRangeContainer}>
+                  <View style={styles.tempRangeItem}>
+                    {/* Ganti dengan icon yang tersedia */}
+                    <Ionicons name="chevron-up" size={16} color="#FFFFFF" />
+                    <Text style={styles.tempRangeText}>Max: {currentWeather.temperature + 3}°</Text>
+                  </View>
+                  <View style={styles.tempRangeItem}>
+                    {/* Ganti dengan icon yang tersedia */}
+                    <Ionicons name="chevron-down" size={16} color="#FFFFFF" />
+                    <Text style={styles.tempRangeText}>Min: {currentWeather.temperature - 2}°</Text>
+                  </View>
+                </View>
+              </View>
+            </LinearGradient>
           </View>
-          {nextForecast.map((day, index) => (
-            <View key={index} style={styles.nextForecastItem}>
-              <Text style={styles.nextForecastDay}>{day.day}</Text>
-              <Ionicons 
-                name={getWeatherIcon(day.icon) as any} 
-                size={24} 
-                color={Colors.textLight} 
-              />
-              <View style={styles.nextForecastTemp}>
-                <Text style={styles.nextForecastHigh}>{day.high}</Text>
-                <Text style={styles.nextForecastLow}>{day.low}</Text>
+
+          {/* Weather Details Cards */}
+          <View style={styles.detailsContainer}>
+            <View style={styles.detailCard}>
+              <View style={styles.detailCardIconContainer}>
+                <Ionicons name="thermometer-outline" size={24} color="#2E7D32" />
+              </View>
+              <Text style={styles.detailCardValue}>{currentWeather.temperature}°C</Text>
+              <Text style={styles.detailCardLabel}>Suhu Udara</Text>
+            </View>
+            
+            <View style={styles.detailCard}>
+              <View style={styles.detailCardIconContainer}>
+                <Ionicons name="rainy-outline" size={24} color="#2E7D32" />
+              </View>
+              <Text style={styles.detailCardValue}>{currentWeather.precipitation}%</Text>
+              <Text style={styles.detailCardLabel}>Curah Hujan</Text>
+            </View>
+            
+            <View style={styles.detailCard}>
+              <View style={styles.detailCardIconContainer}>
+                <Ionicons name="water-outline" size={24} color="#2E7D32" />
+              </View>
+              <Text style={styles.detailCardValue}>{currentWeather.humidity}%</Text>
+              <Text style={styles.detailCardLabel}>Kelembaban</Text>
+            </View>
+          </View>
+
+          {/* Today's Hourly Forecast */}
+          <View style={styles.sectionCard}>
+            <View style={styles.sectionHeader}>
+              <View style={styles.sectionTitleContainer}>
+                <Ionicons name="time-outline" size={20} color="#2E7D32" />
+                <Text style={styles.sectionTitle}>Hari Ini</Text>
+              </View>
+              <Text style={styles.sectionDate}>{getCurrentDate()}</Text>
+            </View>
+            
+            <View style={styles.hourlyForecast}>
+              {hourlyData.map((hour, index) => (
+                <View 
+                  key={index} 
+                  style={[
+                    styles.hourlyItem,
+                    hour.active && styles.hourlyItemActive
+                  ]}
+                >
+                  <Text style={[
+                    styles.hourlyTime,
+                    hour.active && styles.hourlyTimeActive
+                  ]}>
+                    {hour.time}
+                  </Text>
+                  <View style={[
+                    styles.hourlyIconContainer,
+                    hour.active && styles.hourlyIconContainerActive
+                  ]}>
+                    <Ionicons 
+                      name={getWeatherIcon(hour.icon) as any} 
+                      size={28} 
+                      color={hour.active ? "#2E7D32" : "#4CAF50"} 
+                    />
+                  </View>
+                  <Text style={[
+                    styles.hourlyTemp,
+                    hour.active && styles.hourlyTempActive
+                  ]}>
+                    {hour.temp}
+                  </Text>
+                </View>
+              ))}
+            </View>
+          </View>
+
+          {/* Next 7 Days Forecast */}
+          <View style={styles.sectionCard}>
+            <View style={styles.sectionHeader}>
+              <View style={styles.sectionTitleContainer}>
+                <Ionicons name="calendar-outline" size={20} color="#2E7D32" />
+                <Text style={styles.sectionTitle}>7 Hari Kedepan</Text>
               </View>
             </View>
-          ))}
-        </View>
+            
+            {currentWeather.forecast && currentWeather.forecast.length > 0 ? (
+              currentWeather.forecast.map((day: any, index: number) => (
+                <View key={index} style={styles.forecastDayItem}>
+                  <Text style={styles.forecastDay}>{day.day}</Text>
+                  
+                  <View style={styles.forecastCondition}>
+                    <Ionicons 
+                      name={day.icon as any} 
+                      size={24} 
+                      color="#4CAF50" 
+                      style={{marginRight: 8}}
+                    />
+                    <Text style={styles.forecastConditionText}>
+                      {day.condition.charAt(0).toUpperCase() + day.condition.slice(1)}
+                    </Text>
+                  </View>
 
-        {/* Spacing */}
-        <View style={styles.bottomSpacing} />
-      </ScrollView>
+                  <View style={styles.forecastTemps}>
+                    <Text style={styles.forecastHigh}>{day.high}</Text>
+                    <Text style={styles.forecastLow}>{day.low}</Text>
+                  </View>
+                </View>
+              ))
+            ) : (
+              <View style={styles.noDataContainer}>
+                <Ionicons name="cloud-offline-outline" size={48} color="#81C784" />
+                <Text style={styles.noDataText}>
+                  Tidak ada data ramalan cuaca
+                </Text>
+              </View>
+            )}
+          </View>
+
+          {/* Footer Spacing dengan tema alam */}
+          <View style={styles.footerSpacing}>
+            <Ionicons name="leaf" size={24} color="#81C784" />
+            <Text style={styles.footerText}>Tetaplah terhubung dengan alam</Text>
+          </View>
+        </ScrollView>
+      </LinearGradient>
     </View>
   );
 }
@@ -207,109 +375,221 @@ export default function CuacaScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: Colors.background,
   },
-  scrollView: {
+  backgroundGradient: {
     flex: 1,
   },
   loadingContainer: {
     flex: 1,
+  },
+  loadingGradient: {
+    flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
-    backgroundColor: Colors.background,
+  },
+  loadingContent: {
+    alignItems: 'center',
   },
   loadingText: {
     marginTop: 12,
     fontSize: 16,
-    color: Colors.textLight,
+    color: '#1B5E20',
+    fontWeight: '500',
   },
   header: {
-    padding: 20,
-    paddingTop: 60,
-    backgroundColor: Colors.white,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    backgroundColor: 'transparent',
   },
-  screenLabel: {
-    fontSize: 12,
-    color: Colors.textLight,
-    marginBottom: 8,
-  },
-  locationHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-  },
-  locationText: {
-    fontSize: 18,
-    fontWeight: '600',
-    color: Colors.text,
-    flex: 1,
-  },
-  currentWeatherSection: {
-    backgroundColor: Colors.white,
-    alignItems: 'center',
-    paddingVertical: 40,
-    paddingHorizontal: 20,
-  },
-  weatherIconContainer: {
-    marginBottom: 20,
-  },
-  temperature: {
-    fontSize: 64,
-    fontWeight: 'bold',
-    color: Colors.text,
-    marginBottom: 8,
-  },
-  precipitationLabel: {
-    fontSize: 14,
-    color: Colors.textLight,
-    marginBottom: 16,
-  },
-  tempRange: {
-    flexDirection: 'row',
-    gap: 16,
-  },
-  tempLabel: {
-    fontSize: 14,
-    color: Colors.text,
-  },
-  detailsBar: {
-    flexDirection: 'row',
-    justifyContent: 'space-around',
-    backgroundColor: Colors.white,
-    paddingVertical: 20,
-    paddingHorizontal: 20,
-    marginTop: 8,
-  },
-  detailItem: {
-    alignItems: 'center',
-    gap: 8,
-  },
-  detailValue: {
-    fontSize: 14,
-    color: Colors.text,
-    fontWeight: '600',
-  },
-  forecastCard: {
-    backgroundColor: Colors.white,
-    borderRadius: 16,
-    padding: 20,
-    margin: 16,
-    marginTop: 8,
-  },
-  forecastCardHeader: {
+  headerTop: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
     marginBottom: 16,
   },
-  forecastCardTitle: {
+  headerLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  iconContainer: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: 'rgba(76, 175, 80, 0.15)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: 'rgba(76, 175, 80, 0.3)',
+  },
+  leafIcon: {
+    marginRight: 0,
+  },
+  screenLabel: {
+    fontSize: 20,
+    color: '#1B5E20',
+    fontWeight: 'bold',
+    letterSpacing: -0.5,
+  },
+  refreshButton: {
+    padding: 4,
+  },
+  locationHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    backgroundColor: 'rgba(255, 255, 255, 0.9)',
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderRadius: 25,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    elevation: 3,
+  },
+  locationText: {
+    fontSize: 18,
+    fontWeight: '600',
+    color: '#1B5E20',
+    flex: 1,
+  },
+  scrollView: {
+    flex: 1,
+  },
+  currentWeatherCard: {
+    marginHorizontal: 16,
+    marginTop: 8,
+    borderRadius: 24,
+    overflow: 'hidden',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.15,
+    shadowRadius: 8,
+    elevation: 5,
+  },
+  currentWeatherGradient: {
+    padding: 24,
+  },
+  currentWeatherContent: {
+    alignItems: 'center',
+  },
+  weatherMainInfo: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    width: '100%',
+    marginBottom: 20,
+  },
+  currentDate: {
+    fontSize: 14,
+    color: 'rgba(255, 255, 255, 0.9)',
+    marginBottom: 8,
+  },
+  temperature: {
+    fontSize: 64,
+    fontWeight: 'bold',
+    color: '#FFFFFF',
+    marginBottom: 4,
+  },
+  weatherCondition: {
+    fontSize: 18,
+    color: '#FFFFFF',
+    fontWeight: '500',
+    textTransform: 'capitalize',
+  },
+  tempRangeContainer: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    gap: 24,
+    backgroundColor: 'rgba(255, 255, 255, 0.2)',
+    paddingHorizontal: 24,
+    paddingVertical: 12,
+    borderRadius: 20,
+  },
+  tempRangeItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  tempRangeText: {
+    fontSize: 14,
+    color: '#FFFFFF',
+    fontWeight: '500',
+  },
+  detailsContainer: {
+    flexDirection: 'row',
+    justifyContent: 'space-around',
+    paddingHorizontal: 16,
+    marginTop: 20,
+  },
+  detailCard: {
+    alignItems: 'center',
+    backgroundColor: 'rgba(255, 255, 255, 0.9)',
+    padding: 16,
+    borderRadius: 20,
+    width: '30%',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    elevation: 3,
+  },
+  detailCardIconContainer: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    backgroundColor: 'rgba(76, 175, 80, 0.1)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  detailCardValue: {
+    fontSize: 18,
+    color: '#1B5E20',
+    fontWeight: 'bold',
+    marginBottom: 4,
+  },
+  detailCardLabel: {
+    fontSize: 12,
+    color: '#2E7D32',
+    textAlign: 'center',
+  },
+  sectionCard: {
+    backgroundColor: 'rgba(255, 255, 255, 0.9)',
+    borderRadius: 24,
+    padding: 20,
+    marginHorizontal: 16,
+    marginTop: 16,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 8,
+    elevation: 4,
+  },
+  sectionHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 20,
+    paddingBottom: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(46, 125, 50, 0.1)',
+  },
+  sectionTitleContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  sectionTitle: {
     fontSize: 18,
     fontWeight: 'bold',
-    color: Colors.text,
+    color: '#1B5E20',
   },
-  forecastCardDate: {
+  sectionDate: {
     fontSize: 14,
-    color: Colors.textLight,
+    color: '#2E7D32',
+    fontWeight: '500',
   },
   hourlyForecast: {
     flexDirection: 'row',
@@ -318,56 +598,105 @@ const styles = StyleSheet.create({
   hourlyItem: {
     alignItems: 'center',
     padding: 12,
-    borderRadius: 12,
+    borderRadius: 16,
+    minWidth: 70,
   },
   hourlyItemActive: {
-    backgroundColor: '#E3F2FD',
+    backgroundColor: 'rgba(76, 175, 80, 0.1)',
     borderWidth: 2,
-    borderColor: Colors.primary,
+    borderColor: '#2E7D32',
   },
   hourlyTime: {
-    fontSize: 12,
-    color: Colors.textLight,
+    fontSize: 13,
+    color: '#4CAF50',
+    fontWeight: '500',
     marginBottom: 8,
   },
-  hourlyTemp: {
-    fontSize: 14,
-    color: Colors.textLight,
-    marginTop: 8,
-  },
-  hourlyTempActive: {
-    color: Colors.primary,
+  hourlyTimeActive: {
+    color: '#1B5E20',
     fontWeight: '600',
   },
-  nextForecastItem: {
+  hourlyIconContainer: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    backgroundColor: 'rgba(76, 175, 80, 0.1)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  hourlyIconContainerActive: {
+    backgroundColor: 'rgba(46, 125, 50, 0.15)',
+  },
+  hourlyTemp: {
+    fontSize: 16,
+    color: '#4CAF50',
+    fontWeight: '500',
+    marginTop: 4,
+  },
+  hourlyTempActive: {
+    color: '#1B5E20',
+    fontWeight: 'bold',
+  },
+  forecastDayItem: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingVertical: 12,
+    paddingVertical: 16,
     borderBottomWidth: 1,
-    borderBottomColor: Colors.border,
+    borderBottomColor: 'rgba(46, 125, 50, 0.1)',
   },
-  nextForecastDay: {
-    fontSize: 14,
-    color: Colors.text,
+  forecastDay: {
+    fontSize: 15,
+    color: '#1B5E20',
     fontWeight: '500',
-    width: 100,
+    width: 80,
   },
-  nextForecastTemp: {
+  forecastCondition: {
     flexDirection: 'row',
-    gap: 8,
     alignItems: 'center',
+    flex: 1,
+    paddingLeft: 10,
   },
-  nextForecastHigh: {
+  forecastConditionText: {
+    fontSize: 13,
+    color: '#2E7D32',
+  },
+  forecastTemps: {
+    flexDirection: 'row',
+    gap: 12,
+    alignItems: 'center',
+    width: 80,
+    justifyContent: 'flex-end',
+  },
+  forecastHigh: {
+    fontSize: 15,
+    color: '#1B5E20',
+    fontWeight: 'bold',
+  },
+  forecastLow: {
+    fontSize: 15,
+    color: '#4CAF50',
+  },
+  noDataContainer: {
+    alignItems: 'center',
+    paddingVertical: 32,
+  },
+  noDataText: {
+    marginTop: 12,
     fontSize: 14,
-    color: Colors.text,
-    fontWeight: '600',
+    color: '#81C784',
+    textAlign: 'center',
   },
-  nextForecastLow: {
-    fontSize: 14,
-    color: Colors.textLight,
+  footerSpacing: {
+    alignItems: 'center',
+    paddingVertical: 30,
+    marginTop: 10,
   },
-  bottomSpacing: {
-    height: 40,
+  footerText: {
+    fontSize: 12,
+    color: '#2E7D32',
+    marginTop: 8,
+    fontStyle: 'italic',
   },
 });

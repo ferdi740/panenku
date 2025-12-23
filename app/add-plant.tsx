@@ -1,11 +1,13 @@
 import { Colors } from '@/constants/Colors';
+import { useNotification } from '@/contexts/NotificationContext';
 import { plantService } from '@/services/plantService';
+import { getCurrentWeather } from '@/services/weatherService'; 
 import { Ionicons } from '@expo/vector-icons';
+import { LinearGradient } from 'expo-linear-gradient';
 import * as ImagePicker from 'expo-image-picker';
 import { useRouter } from 'expo-router';
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
-  Alert,
   Platform,
   ScrollView,
   StyleSheet,
@@ -15,260 +17,155 @@ import {
   View,
   Image,
   Modal,
-  TouchableWithoutFeedback
+  TouchableWithoutFeedback,
+  KeyboardAvoidingView,
+  ActivityIndicator
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 
-// Format date to Indonesian format
+// --- Helper Functions ---
 const formatDateToIndonesian = (date: Date) => {
   const months = [
     'Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni',
     'Juli', 'Agustus', 'September', 'Oktober', 'November', 'Desember'
   ];
-  
   const day = date.getDate();
   const month = months[date.getMonth()];
   const year = date.getFullYear();
-  
   return `${day} ${month} ${year}`;
 };
 
-// Format date to YYYY-MM-DD for input[type="date"] - FIXED VERSION
 const formatDateForInput = (date: Date) => {
   if (!date || isNaN(date.getTime())) {
-    // Return current date if invalid
     const today = new Date();
     return today.toISOString().split('T')[0];
   }
-  
   const year = date.getFullYear();
   const month = String(date.getMonth() + 1).padStart(2, '0');
   const day = String(date.getDate()).padStart(2, '0');
   return `${year}-${month}-${day}`;
 };
 
-// Parse date from YYYY-MM-DD - FIXED VERSION
 const parseDateFromInput = (dateString: string) => {
   if (!dateString) return new Date();
-  
   try {
     const [year, month, day] = dateString.split('-').map(Number);
-    // Month is 0-indexed in JavaScript Date
     return new Date(year, month - 1, day);
   } catch (error) {
-    console.error('Error parsing date:', error);
     return new Date();
   }
 };
 
-// Calculate harvest date based on weather condition
-const calculateHarvestDate = (plantedDate: Date, weatherCondition: string) => {
+const calculateHarvestDateByDays = (plantedDate: Date, days: number) => {
   const harvestDate = new Date(plantedDate);
-  
-  switch (weatherCondition) {
-    case 'cerah':
-      // Cuaca cerah - panen lebih cepat (2 bulan)
-      harvestDate.setDate(harvestDate.getDate() + 60);
-      break;
-    case 'hujan':
-      // Cuaca hujan - panen lebih lama (4.5 bulan / 135 hari)
-      harvestDate.setDate(harvestDate.getDate() + 135);
-      break;
-    case 'berawan':
-      // Cuaca berawan - normal (3 bulan)
-      harvestDate.setDate(harvestDate.getDate() + 90);
-      break;
-    case 'panas':
-      // Cuaca panas - sedikit lebih cepat (2.5 bulan)
-      harvestDate.setDate(harvestDate.getDate() + 75);
-      break;
-    case 'dingin':
-      // Cuaca dingin - lebih lama (5 bulan)
-      harvestDate.setDate(harvestDate.getDate() + 150);
-      break;
-    default:
-      // Default normal (3 bulan)
-      harvestDate.setDate(harvestDate.getDate() + 90);
-  }
-  
+  harvestDate.setDate(harvestDate.getDate() + days);
   return harvestDate;
 };
 
-// Get harvest duration text based on weather condition
-const getHarvestDurationText = (weatherCondition: string) => {
-  switch (weatherCondition) {
-    case 'cerah':
-      return '2 Bulan';
-    case 'hujan':
-      return '4.5 Bulan';
-    case 'berawan':
-      return '3 Bulan';
-    case 'panas':
-      return '2.5 Bulan';
-    case 'dingin':
-      return '5 Bulan';
-    default:
-      return '3 Bulan';
-  }
-};
-
-// Validate date
 const isValidDate = (date: Date) => {
   return date instanceof Date && !isNaN(date.getTime());
 };
 
-// Weather options
-const weatherOptions = [
-  { value: 'cerah', label: 'Cerah', icon: 'sunny' },
-  { value: 'berawan', label: 'Berawan', icon: 'partly-sunny' },
-  { value: 'hujan', label: 'Hujan', icon: 'rainy' },
-  { value: 'panas', label: 'Panas', icon: 'thermometer' },
-  { value: 'dingin', label: 'Dingin', icon: 'snow' },
-];
-
 export default function AddPlantScreen() {
   const router = useRouter();
+  const { showNotification } = useNotification();
   const [loading, setLoading] = useState(false);
+  const [isDetecting, setIsDetecting] = useState(true);
   
-  // State for date pickers
   const [showPlantedDatePicker, setShowPlantedDatePicker] = useState(false);
-  const [showHarvestDatePicker, setShowHarvestDatePicker] = useState(false);
-  const [showWeatherDropdown, setShowWeatherDropdown] = useState(false);
+  
+  // Validation Modal State
+  const [showValidationModal, setShowValidationModal] = useState(false);
+  const [validationMessage, setValidationMessage] = useState({ title: '', message: '' });
   
   const handleBack = () => {
-    router.push('/(tabs)/ditanam');
+    router.back();
   };
-  
-  // Set initial dates - FIXED with proper validation
-  const getInitialDates = () => {
-    const today = new Date();
-    const plantedDate = new Date(today);
-    const initialWeather = 'berawan'; // Default weather
-    const harvestDate = calculateHarvestDate(plantedDate, initialWeather);
-    
-    return {
-      plantedDate: isValidDate(plantedDate) ? plantedDate : new Date(),
-      harvestDate: isValidDate(harvestDate) ? harvestDate : calculateHarvestDate(new Date(), initialWeather),
-      weather: initialWeather
-    };
-  };
-
-  const initialDates = getInitialDates();
   
   const [form, setForm] = useState({
     name: '',
     type: '',
-    plantedDate: initialDates.plantedDate,
-    harvestDate: initialDates.harvestDate,
-    location: 'Cikole, Kota Sukabumi',
-    area: '', // Tambahan: luas hektar
-    weather: initialDates.weather,
-    weatherNotes: '', // Catatan tambahan tentang cuaca
+    plantedDate: new Date(),
+    harvestDate: new Date(),
+    location: '',
+    area: '',
+    weather: '',
+    weatherLabel: '',
+    harvestDurationDays: 90,
+    harvestDurationText: '',
     fertilizer: '',
     image: 'https://images.unsplash.com/photo-1416879595882-3373a0480b5b?w=400&h=300&fit=crop',
   });
 
-  // Handle weather change
-  const handleWeatherChange = (weather: string) => {
-    const newHarvestDate = calculateHarvestDate(form.plantedDate, weather);
-    setForm({
-      ...form,
-      weather: weather,
-      harvestDate: newHarvestDate
-    });
-    setShowWeatherDropdown(false);
-  };
+  // --- AUTOMATION LOGIC ---
+  useEffect(() => {
+    const detectLocationAndWeather = async () => {
+      setIsDetecting(true);
+      try {
+        const weatherData = await getCurrentWeather();
+        
+        const estimatedHarvestDate = calculateHarvestDateByDays(
+          form.plantedDate, 
+          weatherData.harvestDurationDays
+        );
 
-  // Handle planted date change
+        setForm(prev => ({
+          ...prev,
+          location: weatherData.location,
+          weather: weatherData.condition,
+          weatherLabel: weatherData.label,
+          harvestDurationDays: weatherData.harvestDurationDays,
+          harvestDurationText: weatherData.harvestDurationText,
+          harvestDate: estimatedHarvestDate
+        }));
+
+      } catch (error) {
+        console.error('Gagal deteksi otomatis:', error);
+        showNotification('Gagal mendeteksi lokasi. Cek GPS Anda.', 'error');
+        setForm(prev => ({ ...prev, location: 'Gagal mendeteksi lokasi' }));
+      } finally {
+        setIsDetecting(false);
+      }
+    };
+
+    detectLocationAndWeather();
+  }, []);
+
   const handlePlantedDateChange = (selectedDate: Date) => {
-    if (!isValidDate(selectedDate)) {
-      console.error('Invalid planted date selected');
-      return;
-    }
-    
-    const newHarvestDate = calculateHarvestDate(selectedDate, form.weather);
+    if (!isValidDate(selectedDate)) return;
+    const newHarvestDate = calculateHarvestDateByDays(selectedDate, form.harvestDurationDays);
     setForm({
       ...form,
       plantedDate: selectedDate,
-      harvestDate: isValidDate(newHarvestDate) ? newHarvestDate : calculateHarvestDate(new Date(), form.weather)
+      harvestDate: newHarvestDate
     });
     setShowPlantedDatePicker(false);
   };
 
-  // Handle harvest date change (manual override)
-  const handleHarvestDateChange = (selectedDate: Date) => {
-    if (!isValidDate(selectedDate)) {
-      console.error('Invalid harvest date selected');
-      return;
-    }
-    
-    setForm({
-      ...form,
-      harvestDate: selectedDate
-    });
-    setShowHarvestDatePicker(false);
-  };
-
-  // Web date input handler - FIXED VERSION
-  const handleWebDateChange = (field: 'plantedDate' | 'harvestDate', value: string) => {
-    console.log(`Date change: ${field} = ${value}`);
-    
+  const handleWebDateChange = (field: 'plantedDate', value: string) => {
     const newDate = parseDateFromInput(value);
-    
-    if (!isValidDate(newDate)) {
-      console.error('Invalid date parsed from input');
-      return;
-    }
-    
-    if (field === 'plantedDate') {
-      const newHarvestDate = calculateHarvestDate(newDate, form.weather);
-      setForm({
-        ...form,
-        plantedDate: newDate,
-        harvestDate: isValidDate(newHarvestDate) ? newHarvestDate : calculateHarvestDate(new Date(), form.weather)
-      });
-    } else {
-      setForm({
-        ...form,
-        harvestDate: newDate
-      });
-    }
-  };
-
-  // Handle area input change dengan validasi angka
-  const handleAreaChange = (text: string) => {
-    // Hanya allow angka dan titik desimal
-    const cleanedText = text.replace(/[^0-9.]/g, '');
-    
-    // Pastikan hanya ada satu titik desimal
-    const parts = cleanedText.split('.');
-    if (parts.length > 2) {
-      return; // Tidak allow multiple decimal points
-    }
-    
+    if (!isValidDate(newDate)) return;
+    const newHarvestDate = calculateHarvestDateByDays(newDate, form.harvestDurationDays);
     setForm({
       ...form,
-      area: cleanedText
+      plantedDate: newDate,
+      harvestDate: newHarvestDate
     });
   };
 
-  const requestImagePermission = async () => {
-    if (Platform.OS !== 'web') {
-      const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
-      if (status !== 'granted') {
-        Alert.alert(
-          'Permission Required',
-          'Aplikasi memerlukan akses galeri foto untuk memilih foto tanaman.',
-          [{ text: 'OK' }]
-        );
-        return false;
-      }
-    }
-    return true;
+  const handleAreaChange = (text: string) => {
+    const cleanedText = text.replace(/[^0-9.]/g, '');
+    const parts = cleanedText.split('.');
+    if (parts.length > 2) return;
+    setForm({ ...form, area: cleanedText });
   };
 
   const handlePickImage = async () => {
-    const hasPermission = await requestImagePermission();
-    if (!hasPermission) return;
+    const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (status !== 'granted') {
+      showNotification('Aplikasi memerlukan akses galeri foto.', 'error');
+      return;
+    }
 
     try {
       const result = await ImagePicker.launchImageLibraryAsync({
@@ -277,229 +174,59 @@ export default function AddPlantScreen() {
         aspect: [4, 3],
         quality: 0.8,
       });
-
       if (!result.canceled && result.assets && result.assets.length > 0) {
         setForm({ ...form, image: result.assets[0].uri });
       }
     } catch (error) {
-      console.error('Error picking image:', error);
-      Alert.alert('Error', 'Gagal memilih foto. Coba lagi.');
+      showNotification('Gagal memilih foto.', 'error');
     }
-  };
-
-  // Custom Date Picker Component for Mobile
-  const CustomDatePicker = ({ 
-    visible, 
-    onClose, 
-    selectedDate, 
-    onDateChange,
-    title 
-  }: {
-    visible: boolean;
-    onClose: () => void;
-    selectedDate: Date;
-    onDateChange: (date: Date) => void;
-    title: string;
-  }) => {
-    const [currentDate, setCurrentDate] = useState(selectedDate);
-
-    if (!visible) return null;
-
-    return (
-      <Modal
-        transparent={true}
-        animationType="slide"
-        visible={visible}
-        onRequestClose={onClose}
-      >
-        <TouchableWithoutFeedback onPress={onClose}>
-          <View style={styles.modalOverlay}>
-            <TouchableWithoutFeedback>
-              <View style={styles.datePickerContainer}>
-                <Text style={styles.datePickerTitle}>{title}</Text>
-                
-                {/* Simple month/year selector */}
-                <View style={styles.dateControls}>
-                  <TouchableOpacity 
-                    style={styles.dateControlButton}
-                    onPress={() => {
-                      const newDate = new Date(currentDate);
-                      newDate.setMonth(newDate.getMonth() - 1);
-                      setCurrentDate(newDate);
-                    }}
-                  >
-                    <Ionicons name="chevron-back" size={20} color={Colors.primary} />
-                  </TouchableOpacity>
-                  
-                  <Text style={styles.monthYearText}>
-                    {currentDate.toLocaleDateString('id-ID', { month: 'long', year: 'numeric' })}
-                  </Text>
-                  
-                  <TouchableOpacity 
-                    style={styles.dateControlButton}
-                    onPress={() => {
-                      const newDate = new Date(currentDate);
-                      newDate.setMonth(newDate.getMonth() + 1);
-                      setCurrentDate(newDate);
-                    }}
-                  >
-                    <Ionicons name="chevron-forward" size={20} color={Colors.primary} />
-                  </TouchableOpacity>
-                </View>
-
-                {/* Date grid */}
-                <View style={styles.dateGrid}>
-                  {['Min', 'Sen', 'Sel', 'Rab', 'Kam', 'Jum', 'Sab'].map(day => (
-                    <Text key={day} style={styles.weekDayLabel}>{day}</Text>
-                  ))}
-                  
-                  {getCalendarDays(currentDate).map((date, index) => (
-                    <TouchableOpacity
-                      key={index}
-                      style={[
-                        styles.dateCell,
-                        date && date.toDateString() === selectedDate.toDateString() && styles.dateCellSelected
-                      ]}
-                      onPress={() => date && onDateChange(date)}
-                      disabled={!date}
-                    >
-                      <Text style={[
-                        styles.dateCellText,
-                        date && date.toDateString() === selectedDate.toDateString() && styles.dateCellTextSelected
-                      ]}>
-                        {date ? date.getDate() : ''}
-                      </Text>
-                    </TouchableOpacity>
-                  ))}
-                </View>
-
-                <TouchableOpacity 
-                  style={styles.datePickerButton}
-                  onPress={() => {
-                    onDateChange(currentDate);
-                    onClose();
-                  }}
-                >
-                  <Text style={styles.datePickerButtonText}>Pilih Tanggal</Text>
-                </TouchableOpacity>
-              </View>
-            </TouchableWithoutFeedback>
-          </View>
-        </TouchableWithoutFeedback>
-      </Modal>
-    );
-  };
-
-  // Weather Dropdown Component
-  const WeatherDropdown = () => {
-    if (!showWeatherDropdown) return null;
-
-    return (
-      <Modal
-        transparent={true}
-        animationType="fade"
-        visible={showWeatherDropdown}
-        onRequestClose={() => setShowWeatherDropdown(false)}
-      >
-        <TouchableWithoutFeedback onPress={() => setShowWeatherDropdown(false)}>
-          <View style={styles.dropdownOverlay}>
-            <TouchableWithoutFeedback>
-              <View style={styles.dropdownContainer}>
-                <Text style={styles.dropdownTitle}>Pilih Kondisi Cuaca</Text>
-                {weatherOptions.map((option) => (
-                  <TouchableOpacity
-                    key={option.value}
-                    style={[
-                      styles.weatherOption,
-                      form.weather === option.value && styles.weatherOptionSelected
-                    ]}
-                    onPress={() => handleWeatherChange(option.value)}
-                  >
-                    <Ionicons 
-                      name={option.icon as any} 
-                      size={20} 
-                      color={form.weather === option.value ? Colors.white : Colors.text} 
-                    />
-                    <Text style={[
-                      styles.weatherOptionText,
-                      form.weather === option.value && styles.weatherOptionTextSelected
-                    ]}>
-                      {option.label}
-                    </Text>
-                    {form.weather === option.value && (
-                      <Ionicons name="checkmark" size={16} color={Colors.white} />
-                    )}
-                  </TouchableOpacity>
-                ))}
-              </View>
-            </TouchableWithoutFeedback>
-          </View>
-        </TouchableWithoutFeedback>
-      </Modal>
-    );
-  };
-
-  // Helper function to get calendar days
-  const getCalendarDays = (date: Date) => {
-    if (!isValidDate(date)) {
-      date = new Date();
-    }
-    
-    const year = date.getFullYear();
-    const month = date.getMonth();
-    
-    const firstDay = new Date(year, month, 1);
-    const lastDay = new Date(year, month + 1, 0);
-    
-    const days: (Date | null)[] = [];
-    
-    // Add empty cells for days before the first day of month
-    for (let i = 0; i < firstDay.getDay(); i++) {
-      days.push(null);
-    }
-    
-    // Add days of the month
-    for (let i = 1; i <= lastDay.getDate(); i++) {
-      days.push(new Date(year, month, i));
-    }
-    
-    return days;
   };
 
   const handleAddPlant = async () => {
-    if (!form.name || !form.name.trim()) {
-      Alert.alert('Error', 'Harap isi Jenis Tanaman!');
+    // 1. Validasi Nama
+    if (!form.name || form.name.trim().length < 3) {
+      setValidationMessage({
+        title: 'Nama Terlalu Pendek',
+        message: 'Nama jenis tanaman harus memiliki minimal 3 karakter agar mudah dikenali.'
+      });
+      setShowValidationModal(true);
       return;
     }
 
-    // Validate area jika diisi
-    if (form.area && isNaN(parseFloat(form.area))) {
-      Alert.alert('Error', 'Luas hektar harus berupa angka!');
+    // 2. Validasi Luas Lahan (REQUIRED)
+    if (!form.area || isNaN(parseFloat(form.area)) || parseFloat(form.area) <= 0) {
+      setValidationMessage({
+        title: 'Luas Lahan Wajib Diisi',
+        message: 'Harap isi luas lahan (hektar) dengan angka yang valid. Data ini penting untuk estimasi hasil panen.'
+      });
+      setShowValidationModal(true);
       return;
     }
 
-    // Validate dates before saving
-    if (!isValidDate(form.plantedDate) || !isValidDate(form.harvestDate)) {
-      Alert.alert('Error', 'Format tanggal tidak valid. Harap periksa kembali.');
+    // 3. Validasi Lokasi & Cuaca
+    if (!form.location || !form.weather) {
+       setValidationMessage({
+        title: 'Data Belum Lengkap',
+        message: 'Mohon tunggu sebentar hingga lokasi dan cuaca berhasil dideteksi otomatis.'
+      });
+      setShowValidationModal(true);
       return;
     }
 
     setLoading(true);
 
     try {
-      const selectedWeather = weatherOptions.find(opt => opt.value === form.weather);
-      
       const newPlant = {
         name: form.name.trim(),
         type: form.type || form.name.trim(),
         plantedDate: form.plantedDate.toISOString().split('T')[0],
         harvestDate: form.harvestDate.toISOString().split('T')[0],
         image: form.image,
-        location: form.location || 'Cikole, Kota Sukabumi',
-        area: form.area ? parseFloat(form.area) : null, // Simpan sebagai number
+        location: form.location,
+        area: form.area ? parseFloat(form.area) : null,
         weather: form.weather,
-        weatherLabel: selectedWeather?.label || 'Berawan',
-        weatherNotes: form.weatherNotes,
+        weatherLabel: form.weatherLabel,
+        weatherNotes: '',
         fertilizer: form.fertilizer || '',
         care: {
           water: '1 kali sehari',
@@ -509,294 +236,383 @@ export default function AddPlantScreen() {
         },
         progress: 10,
         status: 'growing' as const,
-        harvestDuration: getHarvestDurationText(form.weather),
+        harvestDuration: form.harvestDurationText,
       };
 
-      const createdPlant = await plantService.createPlant(newPlant);
+      await plantService.createPlant(newPlant);
+      showNotification(`Tanaman ${form.name} berhasil ditambahkan!`, 'success');
+      router.back();
 
-      Alert.alert(
-        'Berhasil!', 
-        `Tanaman ${createdPlant.name} berhasil ditambahkan!\nPerkiraan panen: ${getHarvestDurationText(form.weather)}`,
-        [
-          { 
-            text: 'OK', 
-            onPress: () => router.push('/(tabs)/ditanam')
-          }
-        ]
-      );
     } catch (error) {
       console.error('Error creating plant:', error);
-      Alert.alert('Error', 'Gagal menambahkan tanaman. Coba lagi.');
+      showNotification('Gagal menambahkan tanaman.', 'error');
     } finally {
       setLoading(false);
     }
   };
 
   const getWeatherIcon = (weather: string) => {
-    const option = weatherOptions.find(opt => opt.value === weather);
-    return option?.icon || 'partly-sunny';
+    const iconMap: any = {
+      'cerah': 'sunny', 'berawan': 'partly-sunny', 'hujan': 'rainy', 'panas': 'thermometer', 'dingin': 'snow'
+    };
+    return iconMap[weather] || 'partly-sunny';
   };
 
-  const getWeatherLabel = (weather: string) => {
-    const option = weatherOptions.find(opt => opt.value === weather);
-    return option?.label || 'Berawan';
+  // Custom Date Picker Component
+  const CustomDatePicker = ({ visible, onClose, selectedDate, onDateChange, title }: any) => {
+    const [currentDate, setCurrentDate] = useState(selectedDate);
+    const getCalendarDays = (date: Date) => {
+       if (!isValidDate(date)) date = new Date();
+       const year = date.getFullYear();
+       const month = date.getMonth();
+       const firstDay = new Date(year, month, 1);
+       const lastDay = new Date(year, month + 1, 0);
+       const days = [];
+       for (let i = 0; i < firstDay.getDay(); i++) days.push(null);
+       for (let i = 1; i <= lastDay.getDate(); i++) days.push(new Date(year, month, i));
+       return days;
+    };
+
+    if (!visible) return null;
+    return (
+      <Modal transparent={true} animationType="slide" visible={visible} onRequestClose={onClose}>
+        <TouchableWithoutFeedback onPress={onClose}>
+          <View style={styles.modalOverlay}>
+            <TouchableWithoutFeedback>
+               <View style={styles.datePickerContainer}>
+                <LinearGradient
+                  colors={['#2E7D32', '#4CAF50']}
+                  start={{ x: 0, y: 0 }}
+                  end={{ x: 1, y: 1 }}
+                  style={styles.datePickerHeader}
+                >
+                  <Text style={styles.datePickerTitle}>{title}</Text>
+                </LinearGradient>
+                 
+                <View style={styles.dateControls}>
+                  <TouchableOpacity style={styles.dateControlButton} onPress={() => {const d = new Date(currentDate); d.setMonth(d.getMonth()-1); setCurrentDate(d);}}>
+                    <Ionicons name="chevron-back" size={24} color="#2E7D32" />
+                  </TouchableOpacity>
+                  <Text style={styles.monthYearText}>{currentDate.toLocaleDateString('id-ID', { month: 'long', year: 'numeric' })}</Text>
+                  <TouchableOpacity style={styles.dateControlButton} onPress={() => {const d = new Date(currentDate); d.setMonth(d.getMonth()+1); setCurrentDate(d);}}>
+                    <Ionicons name="chevron-forward" size={24} color="#2E7D32" />
+                  </TouchableOpacity>
+                </View>
+
+                <View style={styles.dateGrid}>
+                  {['Min', 'Sen', 'Sel', 'Rab', 'Kam', 'Jum', 'Sab'].map(day => (
+                    <Text key={day} style={styles.weekDayLabel}>{day}</Text>
+                  ))}
+                  {getCalendarDays(currentDate).map((date: any, index: number) => (
+                    <TouchableOpacity 
+                      key={index} 
+                      style={[
+                        styles.dateCell, 
+                        date && date.toDateString() === selectedDate.toDateString() && styles.dateCellSelected
+                      ]} 
+                      onPress={() => date && onDateChange(date)} 
+                      disabled={!date}
+                    >
+                      <Text style={[
+                        styles.dateCellText, 
+                        date && date.toDateString() === selectedDate.toDateString() && styles.dateCellTextSelected
+                      ]}>
+                        {date ? date.getDate() : ''}
+                      </Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+
+                <View style={styles.datePickerButtons}>
+                  <TouchableOpacity style={styles.datePickerCancelButton} onPress={onClose}>
+                    <Text style={styles.datePickerCancelButtonText}>Batal</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity style={styles.datePickerConfirmButton} onPress={() => { onDateChange(currentDate); onClose(); }}>
+                    <LinearGradient
+                      colors={['#4CAF50', '#2E7D32']}
+                      start={{ x: 0, y: 0 }}
+                      end={{ x: 1, y: 1 }}
+                      style={styles.datePickerConfirmButtonGradient}
+                    >
+                      <Text style={styles.datePickerConfirmButtonText}>Pilih Tanggal</Text>
+                    </LinearGradient>
+                  </TouchableOpacity>
+                </View>
+               </View>
+            </TouchableWithoutFeedback>
+          </View>
+        </TouchableWithoutFeedback>
+      </Modal>
+    );
   };
 
   return (
     <View style={styles.container}>
-      {/* Header */}
-      <View style={styles.header}>
-        <Text style={styles.screenLabel}>detail tanaman</Text>
-        <View style={styles.headerContent}>
-          <TouchableOpacity 
-            onPress={handleBack} 
-            style={styles.backButton}
-            hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-            activeOpacity={0.7}
-          >
-            <Ionicons name="arrow-back" size={24} color={Colors.text} />
-          </TouchableOpacity>
-          <Text style={styles.headerTitle}>Tambah Catatan</Text>
-          <View style={styles.placeholder} />
-        </View>
-      </View>
-
-      <ScrollView style={styles.content} showsVerticalScrollIndicator={false}>
-        {/* Image Selection */}
-        <View style={styles.imageSection}>
-          <Text style={styles.label}>Foto Tanaman</Text>
-          
-          {/* Preview Image */}
-          <TouchableOpacity 
-            style={styles.imagePreviewContainer}
-            onPress={handlePickImage}
-          >
-            {form.image ? (
-              <Image 
-                source={{ uri: form.image }} 
-                style={styles.imagePreview}
-                resizeMode="cover"
-              />
-            ) : (
-              <View style={styles.imagePlaceholder}>
-                <Ionicons name="camera" size={40} color={Colors.textLight} />
-                <Text style={styles.imagePlaceholderText}>Tambahkan Foto</Text>
-              </View>
-            )}
-          </TouchableOpacity>
-        </View>
-
-        {/* Form Fields */}
-        <View style={styles.form}>
-          {/* Jenis Tanaman */}
-          <View style={styles.inputGroup}>
-            <Text style={styles.label}>Jenis Tanaman</Text>
-            <View style={styles.inputContainer}>
-              <Ionicons name="leaf-outline" size={20} color={Colors.textLight} style={styles.inputIcon} />
-              <TextInput
-                style={styles.input}
-                placeholder="Masukan jenis tanaman"
-                placeholderTextColor={Colors.textLight}
-                value={form.name}
-                onChangeText={(text) => setForm({...form, name: text})}
-              />
-            </View>
-          </View>
-
-          {/* Tanggal Tanam */}
-          <View style={styles.inputGroup}>
-            <Text style={styles.label}>Tanggal Tanam</Text>
-            {Platform.OS === 'web' ? (
-              // Web version - use native date input
-              <View style={styles.inputContainer}>
-                <Ionicons name="calendar-outline" size={20} color={Colors.textLight} style={styles.inputIcon} />
-                <input
-                  type="date"
-                  value={formatDateForInput(form.plantedDate)}
-                  onChange={(e) => handleWebDateChange('plantedDate', e.target.value)}
-                  style={{
-                    ...styles.webDateInput,
-                    background: Colors.cardBackground,
-                    color: Colors.text,
-                  }}
-                />
-              </View>
-            ) : (
-              // Mobile version - use custom picker
-              <TouchableOpacity 
-                style={styles.dateInputContainer}
-                onPress={() => setShowPlantedDatePicker(true)}
-              >
-                <Ionicons name="calendar-outline" size={20} color={Colors.textLight} style={styles.inputIcon} />
-                <Text style={styles.dateInputText}>
-                  {formatDateToIndonesian(form.plantedDate)}
-                </Text>
-                <Ionicons name="chevron-down" size={16} color={Colors.textLight} style={styles.dateChevron} />
+      {/* Background dengan tema alam */}
+      <LinearGradient
+        colors={['#E8F5E9', '#C8E6C9', '#A5D6A7']}
+        style={styles.backgroundGradient}
+      >
+        
+        {/* Header */}
+        <SafeAreaView edges={['top']}>
+          <View style={styles.header}>
+            <View style={styles.headerContent}>
+              <TouchableOpacity onPress={handleBack} style={styles.backButton}>
+                <Ionicons name="arrow-back" size={24} color="#1B5E20" />
               </TouchableOpacity>
-            )}
-          </View>
-
-          {/* Luas Lahan (Hektar) */}
-          <View style={styles.inputGroup}>
-            <Text style={styles.label}>Luas Lahan (Hektar)</Text>
-            <View style={styles.inputContainer}>
-              <Ionicons name="resize-outline" size={20} color={Colors.textLight} style={styles.inputIcon} />
-              <TextInput
-                style={styles.input}
-                placeholder="0.00"
-                placeholderTextColor={Colors.textLight}
-                value={form.area}
-                onChangeText={handleAreaChange}
-                keyboardType="decimal-pad"
-              />
+              <View style={styles.placeholder} />
             </View>
           </View>
+        </SafeAreaView>
 
-          {/* Kondisi Cuaca Dropdown */}
-          <View style={styles.inputGroup}>
-            <Text style={styles.label}>Kondisi Cuaca</Text>
-            <TouchableOpacity 
-              style={styles.dateInputContainer}
-              onPress={() => setShowWeatherDropdown(true)}
-            >
-              <Ionicons 
-                name={getWeatherIcon(form.weather) as any} 
-                size={20} 
-                color={Colors.textLight} 
-                style={styles.inputIcon} 
-              />
-              <Text style={styles.dateInputText}>
-                {getWeatherLabel(form.weather)}
-              </Text>
-              <Ionicons name="chevron-down" size={16} color={Colors.textLight} style={styles.dateChevron} />
-            </TouchableOpacity>
-            <Text style={styles.weatherInfoText}>
-              Perkiraan panen: {getHarvestDurationText(form.weather)}
-            </Text>
-          </View>
-
-          {/* Perkiraan Waktu Panen */}
-          <View style={styles.inputGroup}>
-            <Text style={styles.label}>Perkiraan Waktu Panen</Text>
-            {Platform.OS === 'web' ? (
-              // Web version - use native date input
-              <View style={styles.inputContainer}>
-                <Ionicons name="time-outline" size={20} color={Colors.textLight} style={styles.inputIcon} />
-                <input
-                  type="date"
-                  value={formatDateForInput(form.harvestDate)}
-                  onChange={(e) => handleWebDateChange('harvestDate', e.target.value)}
-                  style={{
-                    ...styles.webDateInput,
-                    background: Colors.cardBackground,
-                    color: Colors.text,
-                  }}
-                />
-              </View>
-            ) : (
-              // Mobile version - use custom picker
-              <TouchableOpacity 
-                style={styles.dateInputContainer}
-                onPress={() => setShowHarvestDatePicker(true)}
-              >
-                <Ionicons name="time-outline" size={20} color={Colors.textLight} style={styles.inputIcon} />
-                <Text style={styles.dateInputText}>
-                  {formatDateToIndonesian(form.harvestDate)}
-                </Text>
-                <Ionicons name="chevron-down" size={16} color={Colors.textLight} style={styles.dateChevron} />
-              </TouchableOpacity>
-            )}
-          </View>
-
-          {/* Lokasi Penanaman */}
-          <View style={styles.inputGroup}>
-            <Text style={styles.label}>Lokasi Penanaman</Text>
-            <View style={styles.inputContainer}>
-              <Ionicons name="location-outline" size={20} color={Colors.textLight} style={styles.inputIcon} />
-              <TextInput
-                style={styles.input}
-                placeholder="Cikole, Kota Sukabumi"
-                placeholderTextColor={Colors.textLight}
-                value={form.location}
-                onChangeText={(text) => setForm({...form, location: text})}
-              />
-            </View>
-          </View>
-
-          {/* Catat Kondisi Cuaca (Notes) */}
-          <View style={styles.inputGroup}>
-            <Text style={styles.label}>Catatan Kondisi Cuaca</Text>
-            <View style={styles.inputContainer}>
-              <TextInput
-                style={[styles.input, styles.textArea]}
-                placeholder="Tambahkan catatan detail tentang cuaca..."
-                placeholderTextColor={Colors.textLight}
-                value={form.weatherNotes}
-                onChangeText={(text) => setForm({...form, weatherNotes: text})}
-                multiline
-                numberOfLines={3}
-                textAlignVertical="top"
-              />
-            </View>
-          </View>
-
-          {/* Catat Pupuk & Lainnya */}
-          <View style={styles.inputGroup}>
-            <Text style={styles.label}>Catat Pupuk & Lainnya</Text>
-            <View style={styles.inputContainer}>
-              <TextInput
-                style={[styles.input, styles.textArea]}
-                placeholder="silahkan catat infomasi detailnya"
-                placeholderTextColor={Colors.textLight}
-                value={form.fertilizer}
-                onChangeText={(text) => setForm({...form, fertilizer: text})}
-                multiline
-                numberOfLines={4}
-                textAlignVertical="top"
-              />
-            </View>
-          </View>
-        </View>
-
-        {/* Save Button */}
-        <TouchableOpacity 
-          style={[styles.saveButton, loading && styles.saveButtonDisabled]} 
-          onPress={handleAddPlant}
-          disabled={loading}
-          activeOpacity={0.8}
+        <KeyboardAvoidingView 
+          style={{ flex: 1 }}
+          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
         >
-          <Text style={styles.saveButtonText}>
-            {loading ? 'Menyimpan...' : 'Simpan Catatan'}
-          </Text>
-        </TouchableOpacity>
+          <ScrollView 
+            style={styles.content} 
+            showsVerticalScrollIndicator={false}
+            contentContainerStyle={styles.scrollContentContainer}
+          >
+            {/* Image Section */}
+            <View style={styles.imageSection}>
+              <Text style={styles.sectionLabel}>Foto Tanaman</Text>
+              <TouchableOpacity style={styles.imagePreviewContainer} onPress={handlePickImage}>
+                {form.image ? (
+                  <Image source={{ uri: form.image }} style={styles.imagePreview} resizeMode="cover" />
+                ) : (
+                  <View style={styles.imagePlaceholder}>
+                    <Ionicons name="camera-outline" size={48} color="#81C784" />
+                    <Text style={styles.imagePlaceholderText}>Tambahkan Foto</Text>
+                    <Text style={styles.imagePlaceholderSubtext}>Ketuk untuk memilih dari galeri</Text>
+                  </View>
+                )}
+                <View style={styles.imageOverlay}>
+                  <Ionicons name="camera" size={20} color="#FFFFFF" />
+                </View>
+              </TouchableOpacity>
+            </View>
 
-        {/* Spacing */}
-        <View style={styles.bottomSpacing} />
-      </ScrollView>
+            {/* Form Section */}
+            <View style={styles.formCard}>
+              <Text style={styles.formTitle}>Informasi Tanaman</Text>
+              
+              {/* Jenis Tanaman */}
+              <View style={styles.inputGroup}>
+                <Text style={styles.label}>Jenis Tanaman</Text>
+                <View style={styles.inputContainer}>
+                  <Ionicons name="leaf-outline" size={20} color="#2E7D32" style={styles.inputIcon} />
+                  <TextInput
+                    style={styles.input}
+                    placeholder="Contoh: Padi, Jagung, Tomat"
+                    placeholderTextColor="#81C784"
+                    value={form.name}
+                    onChangeText={(text) => setForm({...form, name: text})}
+                  />
+                </View>
+              </View>
 
-      {/* Custom Date Pickers for Mobile */}
-      {Platform.OS !== 'web' && (
-        <>
-          <CustomDatePicker
-            visible={showPlantedDatePicker}
-            onClose={() => setShowPlantedDatePicker(false)}
-            selectedDate={form.plantedDate}
-            onDateChange={handlePlantedDateChange}
-            title="Pilih Tanggal Tanam"
+              {/* Tanggal Tanam */}
+              <View style={styles.inputGroup}>
+                <Text style={styles.label}>Tanggal Tanam</Text>
+                {Platform.OS === 'web' ? (
+                  <View style={styles.inputContainer}>
+                    <Ionicons name="calendar-outline" size={20} color="#2E7D32" style={styles.inputIcon} />
+                    <input
+                      type="date"
+                      value={formatDateForInput(form.plantedDate)}
+                      onChange={(e) => handleWebDateChange('plantedDate', e.target.value)}
+                      style={styles.webDateInput}
+                    />
+                  </View>
+                ) : (
+                  <TouchableOpacity 
+                    style={styles.dateInputContainer} 
+                    onPress={() => setShowPlantedDatePicker(true)}
+                    activeOpacity={0.7}
+                  >
+                    <Ionicons name="calendar-outline" size={20} color="#2E7D32" style={styles.inputIcon} />
+                    <Text style={styles.dateInputText}>{formatDateToIndonesian(form.plantedDate)}</Text>
+                    <Ionicons name="chevron-down" size={18} color="#2E7D32" />
+                  </TouchableOpacity>
+                )}
+              </View>
+
+              {/* Luas Lahan */}
+              <View style={styles.inputGroup}>
+                <View style={styles.labelRow}>
+                  <Text style={styles.label}>Luas Lahan (Hektar)</Text>
+                  <Text style={styles.requiredLabel}>* Wajib diisi</Text>
+                </View>
+                <View style={styles.inputContainer}>
+                  <Ionicons name="resize-outline" size={20} color="#2E7D32" style={styles.inputIcon} />
+                  <TextInput
+                    style={styles.input}
+                    placeholder="0.00"
+                    placeholderTextColor="#81C784"
+                    value={form.area}
+                    onChangeText={handleAreaChange}
+                    keyboardType="decimal-pad"
+                  />
+                  <Text style={styles.areaUnit}>Ha</Text>
+                </View>
+              </View>
+            </View>
+
+            {/* Automated Info Section */}
+            <View style={styles.autoSectionCard}>
+              <View style={styles.autoSectionHeader}>
+                <Ionicons name="cloud-circle-outline" size={24} color="#2E7D32" />
+                <Text style={styles.autoSectionTitle}>Informasi Otomatis</Text>
+              </View>
+              
+              {isDetecting ? (
+                <View style={styles.detectingContainer}>
+                  <ActivityIndicator size="large" color="#2E7D32" />
+                  <Text style={styles.detectingText}>Mendeteksi lokasi & cuaca...</Text>
+                  <Text style={styles.detectingSubtext}>Mohon tunggu sebentar</Text>
+                </View>
+              ) : (
+                <>
+                  {/* Lokasi */}
+                  <View style={styles.autoInfoRow}>
+                    <View style={styles.autoInfoIconContainer}>
+                      <Ionicons name="location" size={18} color="#2E7D32" />
+                    </View>
+                    <View style={styles.autoInfoContent}>
+                      <Text style={styles.autoInfoLabel}>Lokasi Terdeteksi</Text>
+                      <Text style={styles.autoInfoValue}>{form.location}</Text>
+                    </View>
+                  </View>
+
+                  {/* Cuaca */}
+                  <View style={styles.autoInfoRow}>
+                    <View style={styles.autoInfoIconContainer}>
+                      <Ionicons name={getWeatherIcon(form.weather) as any} size={18} color="#2E7D32" />
+                    </View>
+                    <View style={styles.autoInfoContent}>
+                      <Text style={styles.autoInfoLabel}>Kondisi Cuaca Saat Ini</Text>
+                      <Text style={styles.autoInfoValue}>{form.weatherLabel}</Text>
+                    </View>
+                  </View>
+
+                  {/* Estimasi Panen */}
+                  <View style={styles.autoInfoRow}>
+                    <View style={styles.autoInfoIconContainer}>
+                      <Ionicons name="time-outline" size={18} color="#2E7D32" />
+                    </View>
+                    <View style={styles.autoInfoContent}>
+                      <Text style={styles.autoInfoLabel}>Estimasi Waktu Panen</Text>
+                      <Text style={styles.autoInfoValue}>{formatDateToIndonesian(form.harvestDate)}</Text>
+                      <Text style={styles.autoInfoNote}>
+                        Durasi: {form.harvestDurationText} (Cuaca {form.weatherLabel})
+                      </Text>
+                    </View>
+                  </View>
+                </>
+              )}
+            </View>
+
+            {/* Catatan Tambahan */}
+            <View style={styles.notesCard}>
+              <View style={styles.notesHeader}>
+                <Ionicons name="document-text-outline" size={24} color="#2E7D32" />
+                <Text style={styles.notesTitle}>Catatan Tambahan</Text>
+              </View>
+              <View style={styles.textAreaContainer}>
+                <TextInput
+                  style={styles.textArea}
+                  placeholder="Catat informasi penting seperti jenis pupuk, perawatan khusus, atau hal lain yang perlu diingat..."
+                  placeholderTextColor="#81C784"
+                  value={form.fertilizer}
+                  onChangeText={(text) => setForm({...form, fertilizer: text})}
+                  multiline
+                  numberOfLines={6}
+                  textAlignVertical="top"
+                />
+              </View>
+            </View>
+
+            {/* Save Button */}
+            <TouchableOpacity 
+              style={[styles.saveButton, (loading || isDetecting) && styles.saveButtonDisabled]} 
+              onPress={handleAddPlant} 
+              disabled={loading || isDetecting} 
+              activeOpacity={0.8}
+            >
+              <LinearGradient
+                colors={['#4CAF50', '#2E7D32']}
+                start={{ x: 0, y: 0 }}
+                end={{ x: 1, y: 1 }}
+                style={styles.saveButtonGradient}
+              >
+                {loading ? (
+                  <ActivityIndicator size="small" color="#FFFFFF" />
+                ) : (
+                  <View style={styles.saveButtonContent}>
+                    <Ionicons name="checkmark-circle-outline" size={20} color="#FFFFFF" />
+                    <Text style={styles.saveButtonText}>
+                      {isDetecting ? 'Menunggu...' : 'Simpan Tanaman'}
+                    </Text>
+                  </View>
+                )}
+              </LinearGradient>
+            </TouchableOpacity>
+
+            <View style={styles.bottomSpacing} />
+          </ScrollView>
+        </KeyboardAvoidingView>
+
+        {/* Date Picker Modal */}
+        {Platform.OS !== 'web' && (
+          <CustomDatePicker 
+            visible={showPlantedDatePicker} 
+            onClose={() => setShowPlantedDatePicker(false)} 
+            selectedDate={form.plantedDate} 
+            onDateChange={handlePlantedDateChange} 
+            title="Pilih Tanggal Tanam" 
           />
+        )}
 
-          <CustomDatePicker
-            visible={showHarvestDatePicker}
-            onClose={() => setShowHarvestDatePicker(false)}
-            selectedDate={form.harvestDate}
-            onDateChange={handleHarvestDateChange}
-            title="Pilih Tanggal Panen"
-          />
-        </>
-      )}
-
-      {/* Weather Dropdown */}
-      <WeatherDropdown />
+        {/* Validation Modal */}
+        <Modal
+          transparent={true}
+          animationType="fade"
+          visible={showValidationModal}
+          onRequestClose={() => setShowValidationModal(false)}
+        >
+          <TouchableWithoutFeedback onPress={() => setShowValidationModal(false)}>
+            <View style={styles.validationModalOverlay}>
+              <TouchableWithoutFeedback>
+                <View style={styles.validationModalContent}>
+                  <View style={styles.validationIconContainer}>
+                    <Ionicons name="alert-circle" size={48} color="#FF9800" />
+                  </View>
+                  <Text style={styles.validationModalTitle}>{validationMessage.title}</Text>
+                  <Text style={styles.validationModalText}>
+                    {validationMessage.message}
+                  </Text>
+                  <TouchableOpacity 
+                    style={styles.validationModalButton} 
+                    onPress={() => setShowValidationModal(false)}
+                    activeOpacity={0.8}
+                  >
+                    <LinearGradient
+                      colors={['#4CAF50', '#2E7D32']}
+                      start={{ x: 0, y: 0 }}
+                      end={{ x: 1, y: 1 }}
+                      style={styles.validationModalButtonGradient}
+                    >
+                      <Text style={styles.validationModalButtonText}>Mengerti</Text>
+                    </LinearGradient>
+                  </TouchableOpacity>
+                </View>
+              </TouchableWithoutFeedback>
+            </View>
+          </TouchableWithoutFeedback>
+        </Modal>
+      </LinearGradient>
     </View>
   );
 }
@@ -804,18 +620,14 @@ export default function AddPlantScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: Colors.background,
+  },
+  backgroundGradient: {
+    flex: 1,
   },
   header: {
-    backgroundColor: Colors.white,
-    paddingTop: 50,
+    backgroundColor: 'transparent',
     paddingBottom: 16,
     paddingHorizontal: 20,
-  },
-  screenLabel: {
-    fontSize: 12,
-    color: Colors.textLight,
-    marginBottom: 8,
   },
   headerContent: {
     flexDirection: 'row',
@@ -823,34 +635,58 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
   },
   backButton: {
-    padding: 4,
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: 'rgba(255, 255, 255, 0.9)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    elevation: 3,
+  },
+  headerTitleContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
   },
   headerTitle: {
     fontSize: 20,
     fontWeight: 'bold',
-    color: Colors.text,
+    color: '#1B5E20',
   },
   placeholder: {
-    width: 32,
+    width: 40,
   },
   content: {
     flex: 1,
-    padding: 20,
   },
-  // Image Section Styles
+  scrollContentContainer: {
+    paddingHorizontal: 16,
+    paddingBottom: 30,
+  },
   imageSection: {
-    marginBottom: 20,
+    marginBottom: 24,
+  },
+  sectionLabel: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#1B5E20',
+    marginBottom: 12,
   },
   imagePreviewContainer: {
     width: '100%',
     height: 200,
-    backgroundColor: Colors.cardBackground,
-    borderRadius: 12,
-    borderWidth: 2,
-    borderColor: Colors.border,
-    borderStyle: 'dashed',
+    borderRadius: 20,
     overflow: 'hidden',
-    marginBottom: 12,
+    position: 'relative',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.15,
+    shadowRadius: 8,
+    elevation: 5,
   },
   imagePreview: {
     width: '100%',
@@ -859,232 +695,440 @@ const styles = StyleSheet.create({
   imagePlaceholder: {
     width: '100%',
     height: '100%',
+    backgroundColor: 'rgba(255, 255, 255, 0.9)',
     justifyContent: 'center',
     alignItems: 'center',
   },
   imagePlaceholderText: {
     marginTop: 8,
-    color: Colors.textLight,
-    fontSize: 14,
+    color: '#2E7D32',
+    fontSize: 16,
+    fontWeight: '600',
   },
-  // Form Styles
-  form: {
+  imagePlaceholderSubtext: {
+    marginTop: 4,
+    color: '#81C784',
+    fontSize: 12,
+  },
+  imageOverlay: {
+    position: 'absolute',
+    bottom: 12,
+    right: 12,
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: 'rgba(46, 125, 50, 0.9)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  formCard: {
+    backgroundColor: 'rgba(255, 255, 255, 0.9)',
+    borderRadius: 20,
+    padding: 20,
+    marginBottom: 20,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 8,
+    elevation: 4,
+  },
+  formTitle: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    color: '#1B5E20',
     marginBottom: 20,
   },
   inputGroup: {
     marginBottom: 16,
   },
-  label: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: Colors.text,
+  labelRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
     marginBottom: 4,
+  },
+  label: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#1B5E20',
+  },
+  requiredLabel: {
+    fontSize: 11,
+    color: '#F44336',
+    fontStyle: 'italic',
   },
   inputContainer: {
     position: 'relative',
+    flexDirection: 'row',
+    alignItems: 'center',
   },
   inputIcon: {
     position: 'absolute',
-    left: 8,
-    top: 6,
+    left: 12,
     zIndex: 1,
   },
   input: {
-    backgroundColor: Colors.cardBackground,
-    borderRadius: 4,
-    padding: 6,
-    paddingLeft: 32,
-    fontSize: 11,
-    color: Colors.text,
+    flex: 1,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 12,
+    paddingHorizontal: 16,
+    paddingLeft: 42,
+    paddingVertical: 14,
+    fontSize: 15,
+    color: '#1B5E20',
     borderWidth: 1,
-    borderColor: Colors.border,
-    height: 32,
+    borderColor: '#C8E6C9',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.05,
+    shadowRadius: 2,
+    elevation: 1,
   },
-  // Date Input Styles
+  areaUnit: {
+    position: 'absolute',
+    right: 16,
+    fontSize: 14,
+    color: '#2E7D32',
+    fontWeight: '600',
+  },
   dateInputContainer: {
-    backgroundColor: Colors.cardBackground,
-    borderRadius: 4,
-    padding: 6,
-    paddingLeft: 32,
-    borderWidth: 1,
-    borderColor: Colors.border,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 12,
+    paddingHorizontal: 16,
+    paddingLeft: 42,
+    paddingVertical: 14,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    height: 32,
+    borderWidth: 1,
+    borderColor: '#C8E6C9',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.05,
+    shadowRadius: 2,
+    elevation: 1,
   },
   dateInputText: {
-    fontSize: 10,
-    color: Colors.text,
+    fontSize: 15,
+    color: '#1B5E20',
     flex: 1,
-    lineHeight: 14,
   },
-  dateChevron: {
-    marginRight: 4,
-  },
-  // Web Date Input
   webDateInput: {
-    width: '100%',
-    padding: 6,
-    paddingLeft: 32,
-    fontSize: 10,
+    flex: 1,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 12,
+    paddingHorizontal: 16,
+    paddingLeft: 42,
+    paddingVertical: 14,
+    fontSize: 15,
+    color: '#1B5E20',
     borderWidth: 1,
-    borderColor: Colors.border,
-    borderRadius: 4,
+    borderColor: '#C8E6C9',
     outline: 'none',
     fontFamily: 'System',
-    lineHeight: 12,
-    height: 32,
   },
-  textArea: {
-    paddingLeft: 8,
-    height: 60,
-    textAlignVertical: 'top',
-    fontSize: 11,
+  autoSectionCard: {
+    backgroundColor: 'rgba(255, 255, 255, 0.9)',
+    borderRadius: 20,
+    padding: 20,
+    marginBottom: 20,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 8,
+    elevation: 4,
   },
-  // Weather Info Text
-  weatherInfoText: {
-    fontSize: 10,
-    color: Colors.textLight,
+  autoSectionHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginBottom: 16,
+  },
+  autoSectionTitle: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    color: '#1B5E20',
+  },
+  detectingContainer: {
+    paddingVertical: 30,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  detectingText: {
+    marginTop: 16,
+    fontSize: 14,
+    color: '#2E7D32',
+    fontWeight: '600',
+  },
+  detectingSubtext: {
+    marginTop: 4,
+    fontSize: 12,
+    color: '#81C784',
+  },
+  autoInfoRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    marginBottom: 16,
+    paddingBottom: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(200, 230, 201, 0.5)',
+  },
+  autoInfoIconContainer: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: 'rgba(76, 175, 80, 0.1)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 12,
+  },
+  autoInfoContent: {
+    flex: 1,
+  },
+  autoInfoLabel: {
+    fontSize: 12,
+    color: '#2E7D32',
+    fontWeight: '600',
+    marginBottom: 2,
+  },
+  autoInfoValue: {
+    fontSize: 15,
+    color: '#1B5E20',
+    fontWeight: '600',
+  },
+  autoInfoNote: {
+    fontSize: 12,
+    color: '#81C784',
     marginTop: 4,
     fontStyle: 'italic',
   },
-  saveButton: {
-    backgroundColor: Colors.primary,
-    borderRadius: 4,
-    padding: 10,
+  notesCard: {
+    backgroundColor: 'rgba(255, 255, 255, 0.9)',
+    borderRadius: 20,
+    padding: 20,
+    marginBottom: 24,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 8,
+    elevation: 4,
+  },
+  notesHeader: {
+    flexDirection: 'row',
     alignItems: 'center',
-    marginTop: 16,
+    gap: 8,
+    marginBottom: 16,
+  },
+  notesTitle: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    color: '#1B5E20',
+  },
+  textAreaContainer: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#C8E6C9',
+    padding: 12,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.05,
+    shadowRadius: 2,
+    elevation: 1,
+  },
+  textArea: {
+    fontSize: 14,
+    color: '#1B5E20',
+    lineHeight: 20,
+    minHeight: 100,
+    textAlignVertical: 'top',
+  },
+  saveButton: {
+    borderRadius: 25,
+    overflow: 'hidden',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.25,
+    shadowRadius: 8,
+    elevation: 8,
   },
   saveButtonDisabled: {
-    backgroundColor: Colors.textLight,
+    opacity: 0.6,
+  },
+  saveButtonGradient: {
+    paddingVertical: 16,
+    paddingHorizontal: 24,
+  },
+  saveButtonContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
   },
   saveButtonText: {
-    color: Colors.white,
-    fontSize: 12,
+    color: '#FFFFFF',
+    fontSize: 16,
     fontWeight: 'bold',
   },
   bottomSpacing: {
-    height: 20,
+    height: 40,
   },
-  // Date Picker Styles
   modalOverlay: {
     flex: 1,
     backgroundColor: 'rgba(0, 0, 0, 0.5)',
     justifyContent: 'flex-end',
   },
   datePickerContainer: {
-    backgroundColor: Colors.white,
-    borderTopLeftRadius: 20,
-    borderTopRightRadius: 20,
-    padding: 20,
+    backgroundColor: '#FFFFFF',
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
     paddingBottom: 30,
     maxHeight: '80%',
   },
+  datePickerHeader: {
+    padding: 24,
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    alignItems: 'center',
+  },
   datePickerTitle: {
-    fontSize: 18,
+    fontSize: 20,
     fontWeight: 'bold',
-    color: Colors.text,
-    textAlign: 'center',
-    marginBottom: 20,
+    color: '#FFFFFF',
   },
   dateControls: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    marginBottom: 15,
+    paddingHorizontal: 20,
+    paddingVertical: 16,
   },
   dateControlButton: {
     padding: 8,
   },
   monthYearText: {
-    fontSize: 16,
+    fontSize: 18,
     fontWeight: '600',
-    color: Colors.text,
+    color: '#1B5E20',
   },
   dateGrid: {
     flexDirection: 'row',
     flexWrap: 'wrap',
-    marginBottom: 20,
+    paddingHorizontal: 16,
+    marginBottom: 24,
   },
   weekDayLabel: {
     width: '14.28%',
     textAlign: 'center',
-    fontSize: 12,
+    fontSize: 14,
     fontWeight: '600',
-    color: Colors.textLight,
-    marginBottom: 8,
+    color: '#2E7D32',
+    marginBottom: 12,
+    paddingVertical: 8,
   },
   dateCell: {
     width: '14.28%',
     aspectRatio: 1,
     justifyContent: 'center',
     alignItems: 'center',
-    marginBottom: 4,
+    marginBottom: 8,
   },
   dateCellSelected: {
-    backgroundColor: Colors.primary,
+    backgroundColor: '#2E7D32',
     borderRadius: 20,
   },
   dateCellText: {
-    fontSize: 14,
-    color: Colors.text,
+    fontSize: 16,
+    color: '#1B5E20',
+    fontWeight: '500',
   },
   dateCellTextSelected: {
-    color: Colors.white,
+    color: '#FFFFFF',
     fontWeight: 'bold',
   },
-  datePickerButton: {
-    backgroundColor: Colors.primary,
-    borderRadius: 8,
-    padding: 16,
+  datePickerButtons: {
+    flexDirection: 'row',
+    paddingHorizontal: 20,
+    gap: 12,
+  },
+  datePickerCancelButton: {
+    flex: 1,
+    backgroundColor: 'rgba(200, 230, 201, 0.5)',
+    borderRadius: 12,
+    paddingVertical: 14,
     alignItems: 'center',
   },
-  datePickerButtonText: {
-    color: Colors.white,
-    fontSize: 16,
+  datePickerCancelButtonText: {
+    fontSize: 15,
+    color: '#2E7D32',
+    fontWeight: '600',
+  },
+  datePickerConfirmButton: {
+    flex: 1,
+    borderRadius: 12,
+    overflow: 'hidden',
+  },
+  datePickerConfirmButtonGradient: {
+    paddingVertical: 14,
+    alignItems: 'center',
+  },
+  datePickerConfirmButtonText: {
+    fontSize: 15,
+    color: '#FFFFFF',
     fontWeight: 'bold',
   },
-  // Weather Dropdown Styles
-  dropdownOverlay: {
+  validationModalOverlay: {
     flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    backgroundColor: 'rgba(0, 0, 0, 0.6)',
     justifyContent: 'center',
     alignItems: 'center',
     padding: 20,
   },
-  dropdownContainer: {
-    backgroundColor: Colors.white,
-    borderRadius: 12,
-    padding: 16,
-    width: '80%',
-    maxWidth: 300,
+  validationModalContent: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 24,
+    padding: 28,
+    width: '100%',
+    maxWidth: 340,
+    alignItems: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.25,
+    shadowRadius: 12,
+    elevation: 10,
   },
-  dropdownTitle: {
+  validationIconContainer: {
+    marginBottom: 20,
+    backgroundColor: 'rgba(255, 152, 0, 0.1)',
+    padding: 16,
+    borderRadius: 50,
+  },
+  validationModalTitle: {
+    fontSize: 20,
+    fontWeight: 'bold',
+    color: '#1B5E20',
+    marginBottom: 12,
+    textAlign: 'center',
+  },
+  validationModalText: {
+    fontSize: 15,
+    color: '#2E7D32',
+    lineHeight: 22,
+    marginBottom: 24,
+    textAlign: 'center',
+  },
+  validationModalButton: {
+    width: '100%',
+    borderRadius: 16,
+    overflow: 'hidden',
+  },
+  validationModalButtonGradient: {
+    paddingVertical: 14,
+    alignItems: 'center',
+  },
+  validationModalButtonText: {
+    color: '#FFFFFF',
     fontSize: 16,
     fontWeight: 'bold',
-    color: Colors.text,
-    textAlign: 'center',
-    marginBottom: 16,
-  },
-  weatherOption: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    padding: 12,
-    borderRadius: 8,
-    marginBottom: 8,
-  },
-  weatherOptionSelected: {
-    backgroundColor: Colors.primary,
-  },
-  weatherOptionText: {
-    fontSize: 14,
-    color: Colors.text,
-    marginLeft: 12,
-    flex: 1,
-  },
-  weatherOptionTextSelected: {
-    color: Colors.white,
-    fontWeight: '600',
   },
 });

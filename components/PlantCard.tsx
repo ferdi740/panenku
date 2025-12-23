@@ -1,10 +1,9 @@
-// plantcard.tsx
-import React, { useState } from 'react';
-import { View, Text, TouchableOpacity, Image, StyleSheet, Alert, Pressable } from 'react-native';
-import { useRouter } from 'expo-router';
-import { Ionicons } from '@expo/vector-icons';
 import { Colors } from '@/constants/Colors';
-import { plantService } from '@/services/plantService';
+import { Ionicons } from '@expo/vector-icons';
+import { LinearGradient } from 'expo-linear-gradient';
+import { useRouter } from 'expo-router';
+import React, { useState } from 'react';
+import { Image, Pressable, StyleSheet, Text, View } from 'react-native';
 
 interface PlantCardProps {
   id: string;
@@ -12,162 +11,141 @@ interface PlantCardProps {
   daysLeft: number;
   image: string;
   plantData?: any;
-  onDelete?: () => void;
-  onEdit?: () => void;
 }
 
-export default function PlantCard({ id, name, daysLeft, image, plantData, onDelete, onEdit }: PlantCardProps) {
+export default function PlantCard({ id, name, daysLeft, image, plantData }: PlantCardProps) {
   const router = useRouter();
   const plantId = id || plantData?.id;
   const [imageError, setImageError] = useState(false);
-  const [isDeleting, setIsDeleting] = useState(false);
+  
+  // Check if plant is harvested based on status from plantData
+  const isHarvested = plantData?.status === 'harvested';
 
-  // Determine plant status
+  // Calculate progress based on status
+  const calculateProgress = () => {
+    if (isHarvested) {
+      // Jika sudah dipanen, progress selalu 100%
+      return 100;
+    }
+    
+    // Jika sedang tumbuh, gunakan progress dari data atau hitung dari daysLeft
+    if (plantData?.progress !== undefined) {
+      return Math.min(Math.max(plantData.progress, 0), 100);
+    }
+    
+    // Fallback: hitung progress dari daysLeft jika ada data penanaman
+    if (plantData?.plantedDate && plantData?.harvestDate) {
+      try {
+        const planted = new Date(plantData.plantedDate);
+        const harvest = new Date(plantData.harvestDate);
+        const now = new Date();
+        
+        const totalTime = harvest.getTime() - planted.getTime();
+        const elapsedTime = now.getTime() - planted.getTime();
+        
+        if (totalTime <= 0) return 100;
+        if (elapsedTime <= 0) return 0;
+        if (elapsedTime >= totalTime) return 100;
+        
+        const progress = Math.round((elapsedTime / totalTime) * 100);
+        return Math.min(Math.max(progress, 0), 100);
+      } catch {
+        return 10; // Default value
+      }
+    }
+    
+    return 10; // Default minimum progress
+  };
+
+  const progress = calculateProgress();
+
+  // Determine plant status logic
   const getPlantStatus = () => {
-    if (daysLeft < 30) {
+    if (isHarvested) {
       return {
-        type: 'warning',
-        text: 'Terdapat Peringatan',
-        borderColor: Colors.warning,
-        icon: 'close-circle' as const,
+        type: 'harvested',
+        text: 'Sudah Panen',
+        color: '#2E7D32',
+        gradient: ['#4CAF50', '#2E7D32'] as [string, string],
+        icon: 'basket' as const,
       };
     }
+
+    // Jika progress 100% tapi belum dipanen
+    if (progress >= 100) {
+      return {
+        type: 'ready',
+        text: 'Siap Panen',
+        color: '#FF5722',
+        gradient: ['#FF7043', '#FF5722'] as [string, string],
+        icon: 'alert-circle' as const,
+      };
+    }
+
     return {
-      type: 'healthy',
-      text: 'Tanaman Sehat',
-      borderColor: Colors.success,
-      icon: 'checkmark-circle' as const,
+      type: 'growing',
+      text: 'Sedang Tumbuh',
+      color: '#FF9800',
+      gradient: ['#FFB74D', '#FF9800'] as [string, string],
+      icon: 'time' as const,
     };
   };
 
   const status = getPlantStatus();
   
-  // Convert days to months
-  const monthsLeft = Math.ceil(daysLeft / 30);
+  // Format Time Text - Fix logic
+  const getTimeText = () => {
+    if (isHarvested) {
+      return 'Selesai';
+    }
+    
+    // Jika progress sudah 100% tapi belum dipanen
+    if (progress >= 100) {
+      return 'Siap Panen!';
+    }
+    
+    // Gunakan daysLeft dari props jika ada
+    if (daysLeft > 0) {
+      if (daysLeft > 30) {
+        const months = Math.ceil(daysLeft / 30);
+        return `${months} bulan lagi`;
+      } else {
+        return `${daysLeft} hari lagi`;
+      }
+    }
+    
+    // Jika daysLeft tidak valid atau 0
+    if (plantData?.harvestDate) {
+      try {
+        const harvestDate = new Date(plantData.harvestDate);
+        const now = new Date();
+        const diffTime = harvestDate.getTime() - now.getTime();
+        const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+        
+        if (diffDays > 0) {
+          if (diffDays > 30) {
+            const months = Math.ceil(diffDays / 30);
+            return `${months} bulan lagi`;
+          } else {
+            return `${diffDays} hari lagi`;
+          }
+        } else if (diffDays <= 0) {
+          return 'Siap Panen!';
+        }
+      } catch {
+        // Fallback jika parsing tanggal gagal
+      }
+    }
+    
+    return 'Menunggu';
+  };
 
   const handlePress = () => {
-    if (isDeleting) {
-      return;
-    }
     if (!plantId || plantId === 'undefined') {
       console.error('❌ PLANT CARD - Invalid plant ID');
       return;
     }
-    (router.push as any)(`/plant-detail-modal?id=${plantId}`);
-  };
-
-  const handleEdit = () => {
-    console.log('✏️ EDIT BUTTON PRESSED - plantId:', plantId);
-    if (!plantId || plantId === 'undefined') {
-      console.error('❌ EDIT BUTTON - Invalid plant ID');
-      Alert.alert('Error', 'ID tanaman tidak valid');
-      return;
-    }
-
-    // Navigate to edit screen
-    router.push(`/edit-plant/${plantId}`);
-  };
-
-  const handleDelete = () => {
-    console.log('🔴 HANDLE DELETE CALLED - plantId:', plantId);
-    if (!plantId || plantId === 'undefined') {
-      console.error('❌ HANDLE DELETE - Invalid plant ID');
-      Alert.alert('Error', 'ID tanaman tidak valid');
-      return;
-    }
-
-    const isWeb = typeof window !== 'undefined';
-    
-    if (isWeb) {
-      console.log('🌐 WEB DETECTED - Using window.confirm');
-      const confirmed = window.confirm(`Apakah Anda yakin ingin menghapus ${name}?`);
-      console.log('🌐 WEB - User confirmed:', confirmed);
-      
-      if (confirmed) {
-        console.log('✅ DELETE CONFIRMED (WEB) - Starting delete process...');
-        deletePlant();
-      } else {
-        console.log('❌ DELETE CANCELLED (WEB) - User cancelled');
-        setIsDeleting(false);
-      }
-    } else {
-      console.log('📱 NATIVE - Showing Alert.alert');
-      Alert.alert(
-        'Hapus Tanaman',
-        `Apakah Anda yakin ingin menghapus ${name}?`,
-        [
-          { 
-            text: 'Batal', 
-            style: 'cancel',
-            onPress: () => {
-              console.log('❌ DELETE CANCELLED - User cancelled');
-              setIsDeleting(false);
-            }
-          },
-          { 
-            text: 'Hapus', 
-            style: 'destructive',
-            onPress: async () => {
-              console.log('✅ DELETE CONFIRMED - User confirmed, starting delete process...');
-              try {
-                await deletePlant();
-              } catch (error) {
-                console.error('❌ DELETE CONFIRMED - Error in deletePlant:', error);
-              }
-            }
-          }
-        ],
-        { cancelable: true, onDismiss: () => {
-          console.log('❌ DELETE ALERT DISMISSED');
-          setIsDeleting(false);
-        }}
-      );
-      console.log('📱 NATIVE - Alert shown');
-    }
-  };
-
-  const deletePlant = async () => {
-    const targetId = String(plantId || plantData?.id || id);
-    
-    console.log('🔴 DELETE PLANT CALLED - targetId:', targetId);
-    
-    if (!targetId || targetId === 'undefined' || targetId === 'null') {
-      console.error('❌ DELETE PLANT - Invalid target ID');
-      Alert.alert('Error', 'ID tanaman tidak valid');
-      setIsDeleting(false);
-      return;
-    }
-
-    try {
-      setIsDeleting(true);
-      console.log('🗑️ PLANT CARD - Attempting to delete plant:', targetId);
-      
-      const success = await plantService.deletePlant(targetId);
-      
-      console.log('🗑️ PLANT CARD - Delete result:', success);
-      
-      if (success) {
-        console.log('✅ PLANT CARD - Plant deleted successfully, reloading...');
-        if (onDelete) {
-          console.log('✅ PLANT CARD - Calling onDelete callback...');
-          onDelete();
-          setTimeout(() => {
-            console.log('✅ PLANT CARD - Calling onDelete callback again after delay...');
-            onDelete();
-          }, 300);
-        } else {
-          console.warn('⚠️ PLANT CARD - onDelete callback is not defined!');
-        }
-      } else {
-        console.error('❌ PLANT CARD - Delete failed, success = false');
-        Alert.alert('Error', 'Gagal menghapus tanaman. ID mungkin tidak cocok.');
-        setIsDeleting(false);
-      }
-    } catch (error) {
-      console.error('❌ PLANT CARD - Error deleting plant:', error);
-      Alert.alert('Error', 'Gagal menghapus tanaman. Coba lagi.');
-      setIsDeleting(false);
-    }
+    router.push(`/plant-detail-modal?id=${plantId}`);
   };
 
   const handleImageError = () => {
@@ -175,14 +153,13 @@ export default function PlantCard({ id, name, daysLeft, image, plantData, onDele
   };
 
   return (
-    <View style={[styles.card, { borderColor: status.borderColor }]}>
-      {/* Main Card Content - Pressable */}
-      <Pressable 
-        onPress={handlePress}
-        style={styles.cardContent}
-        disabled={isDeleting}
-      >
-        {/* Background Image */}
+    <Pressable 
+      onPress={handlePress}
+      style={styles.cardContainer}
+      android_ripple={{ color: 'rgba(76, 175, 80, 0.1)' }}
+    >
+      <View style={[styles.card, { borderColor: status.color }]}>
+        {/* Image Section */}
         <View style={styles.imageContainer}>
           {!imageError ? (
             <Image 
@@ -192,190 +169,158 @@ export default function PlantCard({ id, name, daysLeft, image, plantData, onDele
             />
           ) : (
             <View style={styles.fallbackContainer}>
-              <Ionicons name="leaf" size={40} color={Colors.textLight} />
+              <Ionicons name="leaf-outline" size={32} color="#81C784" />
             </View>
           )}
+          
+          {/* Progress Badge */}
+          <View style={styles.progressBadge}>
+            <LinearGradient
+              colors={status.gradient}
+              style={styles.progressBadgeGradient}
+            >
+              <Text style={styles.progressBadgeText}>{progress}%</Text>
+            </LinearGradient>
+          </View>
         </View>
 
-        {/* Content */}
+        {/* Content Section */}
         <View style={styles.content}>
           {/* Plant Name */}
-          <View style={styles.nameRow}>
-            <Ionicons name="leaf" size={16} color={Colors.primary} />
-            <Text style={styles.name}>{name}</Text>
-          </View>
-
-          {/* Status */}
+          <Text style={styles.plantName} numberOfLines={1}>{name}</Text>
+          
+          {/* Status Row */}
           <View style={styles.statusRow}>
             <Ionicons 
               name={status.icon} 
-              size={16} 
-              color={status.type === 'healthy' ? Colors.success : Colors.warning} 
+              size={14} 
+              color={status.color} 
             />
-            <Text style={[
-              styles.statusText,
-              { color: status.type === 'healthy' ? Colors.success : Colors.warning }
-            ]}>
+            <Text style={[styles.statusText, { color: status.color }]}>
               {status.text}
             </Text>
           </View>
 
-          {/* Time to Harvest */}
+          {/* Time Row */}
           <View style={styles.timeRow}>
-            <Ionicons name="time-outline" size={16} color={Colors.textLight} />
+            <Ionicons name="calendar-outline" size={12} color="#81C784" />
             <Text style={styles.timeText}>
-              {monthsLeft} Bulan Menuju Panen
+              {getTimeText()}
             </Text>
           </View>
+
+          {/* Progress Bar */}
+          <View style={styles.progressContainer}>
+            <View style={styles.progressBar}>
+              <LinearGradient
+                colors={status.gradient}
+                style={[styles.progressFill, { width: `${progress}%` }]}
+              />
+            </View>
+          </View>
         </View>
-      </Pressable>
-
-      {/* Action Buttons - Edit & Delete */}
-      <View style={styles.actionButtons}>
-        {/* Edit Button */}
-        <Pressable 
-          style={styles.editButton}
-          onPress={(e) => {
-            console.log('✏️ EDIT BUTTON PRESSED');
-            e?.stopPropagation?.();
-            try {
-              handleEdit();
-              console.log('✏️ EDIT BUTTON PRESSED - handleEdit called successfully');
-            } catch (error) {
-              console.error('❌ EDIT BUTTON PRESSED - Error calling handleEdit:', error);
-            }
-          }}
-          hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-        >
-          <Ionicons name="create-outline" size={16} color={Colors.white} />
-        </Pressable>
-
-        {/* Delete Button */}
-        <Pressable 
-          style={styles.deleteButton}
-          onPress={(e) => {
-            console.log('🗑️ DELETE BUTTON PRESSED - Calling handleDelete...');
-            e?.stopPropagation?.();
-            try {
-              handleDelete();
-              console.log('🗑️ DELETE BUTTON PRESSED - handleDelete called successfully');
-            } catch (error) {
-              console.error('❌ DELETE BUTTON PRESSED - Error calling handleDelete:', error);
-            }
-          }}
-          onPressIn={() => {
-            console.log('🗑️ DELETE BUTTON PRESS IN');
-            setIsDeleting(true);
-          }}
-          hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-        >
-          <Ionicons name="trash-outline" size={16} color={Colors.white} />
-        </Pressable>
       </View>
-    </View>
+    </Pressable>
   );
 }
 
 const styles = StyleSheet.create({
-  card: {
-    backgroundColor: Colors.white,
-    borderRadius: 12,
-    marginBottom: 16,
+  cardContainer: {
     width: '48%',
-    borderWidth: 2,
+    marginBottom: 12,
+  },
+  card: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 16,
     overflow: 'hidden',
-    position: 'relative',
+    borderWidth: 2,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.1,
-    shadowRadius: 4,
+    shadowRadius: 6,
     elevation: 3,
-  },
-  cardContent: {
-    flex: 1,
   },
   imageContainer: {
     width: '100%',
-    height: 120,
-    backgroundColor: Colors.border,
+    height: 100,
+    position: 'relative',
   },
   image: {
     width: '100%',
     height: '100%',
+    resizeMode: 'cover',
   },
   fallbackContainer: {
     width: '100%',
     height: '100%',
     justifyContent: 'center',
     alignItems: 'center',
-    backgroundColor: Colors.border,
+    backgroundColor: 'rgba(200, 230, 201, 0.5)',
+  },
+  progressBadge: {
+    position: 'absolute',
+    top: 8,
+    right: 8,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.2,
+    shadowRadius: 4,
+    elevation: 3,
+  },
+  progressBadgeGradient: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderWidth: 2,
+    borderColor: '#FFFFFF',
+  },
+  progressBadgeText: {
+    fontSize: 12,
+    fontWeight: 'bold',
+    color: '#FFFFFF',
   },
   content: {
     padding: 12,
   },
-  nameRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 8,
-  },
-  name: {
-    fontSize: 16,
+  plantName: {
+    fontSize: 14,
     fontWeight: 'bold',
-    color: Colors.text,
-    marginLeft: 6,
+    color: '#1B5E20',
+    marginBottom: 4,
   },
   statusRow: {
     flexDirection: 'row',
     alignItems: 'center',
     marginBottom: 6,
+    gap: 4,
   },
   statusText: {
-    fontSize: 12,
+    fontSize: 11,
     fontWeight: '600',
-    marginLeft: 6,
   },
   timeRow: {
     flexDirection: 'row',
     alignItems: 'center',
+    marginBottom: 8,
+    gap: 4,
   },
   timeText: {
-    fontSize: 12,
-    color: Colors.textLight,
-    marginLeft: 6,
+    fontSize: 10,
+    color: '#81C784',
   },
-  actionButtons: {
-    position: 'absolute',
-    top: 8,
-    right: 8,
-    flexDirection: 'row',
-    gap: 8,
+  progressContainer: {
+    marginTop: 4,
   },
-  editButton: {
-    backgroundColor: Colors.primary,
-    borderRadius: 16,
-    width: 32,
-    height: 32,
-    justifyContent: 'center',
-    alignItems: 'center',
-    zIndex: 1000,
-    elevation: 25,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.3,
-    shadowRadius: 4,
+  progressBar: {
+    height: 6,
+    backgroundColor: 'rgba(200, 230, 201, 0.5)',
+    borderRadius: 3,
+    overflow: 'hidden',
   },
-  deleteButton: {
-    backgroundColor: Colors.danger,
-    borderRadius: 16,
-    width: 32,
-    height: 32,
-    justifyContent: 'center',
-    alignItems: 'center',
-    zIndex: 1000,
-    elevation: 25,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.3,
-    shadowRadius: 4,
+  progressFill: {
+    height: '100%',
+    borderRadius: 3,
   },
 });

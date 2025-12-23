@@ -1,68 +1,113 @@
 import { Tabs } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
-import { Colors } from '@/constants/Colors';
+import { StyleSheet, View } from 'react-native';
 
 export default function TabLayout() {
   return (
     <Tabs
       screenOptions={{
-        tabBarActiveTintColor: Colors.primary,
-        tabBarInactiveTintColor: Colors.textLight,
         headerShown: false,
-        tabBarStyle: {
-          backgroundColor: Colors.white,
-          borderTopWidth: 1,
-          borderTopColor: Colors.border,
-          height: 70,
-          paddingBottom: 10,
-          paddingTop: 8,
-        },
-        tabBarLabelStyle: {
-          fontSize: 12,
-          fontWeight: '500',
-          marginTop: 2,
-        },
+        tabBarStyle: styles.tabBar,
         tabBarShowLabel: true,
-        tabBarIconStyle: {
-          marginTop: 4,
-        },
+        tabBarLabelStyle: styles.tabLabel,
+        tabBarIconStyle: styles.tabIcon,
+        tabBarActiveTintColor: '#2E7D32',
+        tabBarInactiveTintColor: '#81C784',
       }}>
+      
       <Tabs.Screen
         name="index"
         options={{
           title: 'Beranda',
-          tabBarLabel: 'Beranda',
-          tabBarIcon: ({ color, size }) => (
-            <Ionicons name="home" size={size} color={color} />
+          tabBarIcon: ({ focused, size }) => (
+            <View style={[styles.iconContainer, focused && styles.iconContainerActive]}>
+              <Ionicons 
+                name={focused ? "home" : "home-outline"} 
+                size={22} 
+                color={focused ? "#FFFFFF" : "#81C784"} 
+              />
+            </View>
           ),
         }}
       />
+      
       <Tabs.Screen
         name="ditanam"
         options={{
           title: 'Tanam',
-          tabBarLabel: 'Tanam',
-          tabBarIcon: ({ color, size }) => (
-            <Ionicons name="leaf" size={size} color={color} />
+          tabBarIcon: ({ focused, size }) => (
+            <View style={[styles.iconContainer, focused && styles.iconContainerActive]}>
+              <Ionicons 
+                name={focused ? "leaf" : "leaf-outline"} 
+                size={22} 
+                color={focused ? "#FFFFFF" : "#81C784"} 
+              />
+            </View>
           ),
         }}
       />
+      
       <Tabs.Screen
         name="cuaca"
         options={{
           title: 'Cuaca',
-          tabBarLabel: 'Cuaca',
-          tabBarIcon: ({ color, size }) => (
-            <Ionicons name="location" size={size} color={color} />
+          tabBarIcon: ({ focused, size }) => (
+            <View style={[styles.iconContainer, focused && styles.iconContainerActive]}>
+              <Ionicons 
+                name={focused ? "partly-sunny" : "partly-sunny-outline"} 
+                size={22} 
+                color={focused ? "#FFFFFF" : "#81C784"} 
+              />
+            </View>
           ),
         }}
       />
+      
       <Tabs.Screen
         name="panen"
         options={{
-          href: null, // Hide from tab bar
+          href: null,
         }}
       />
     </Tabs>
   );
 }
+
+const styles = StyleSheet.create({
+  tabBar: {
+    backgroundColor: '#FFFFFF',
+    borderTopWidth: 0,
+    height: 75,
+    paddingBottom: 8,
+    paddingTop: 8,
+    shadowColor: '#2E7D32',
+    shadowOffset: { width: 0, height: -4 },
+    shadowOpacity: 0.15,
+    shadowRadius: 10,
+    elevation: 10,
+  },
+  tabLabel: {
+    fontSize: 11,
+    fontWeight: '600',
+    marginTop: 4,
+  },
+  tabIcon: {
+    marginTop: 0,
+  },
+  iconContainer: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: 'transparent',
+  },
+  iconContainerActive: {
+    backgroundColor: '#4CAF50',
+    shadowColor: '#4CAF50',
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.3,
+    shadowRadius: 6,
+    elevation: 6,
+  },
+});

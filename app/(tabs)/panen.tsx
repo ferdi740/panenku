@@ -5,11 +5,12 @@ import {
   StyleSheet, 
   ScrollView, 
   Image, 
-  TouchableOpacity,
+  TouchableOpacity, 
   ActivityIndicator,
   RefreshControl,
   Alert 
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context'; // 1. Import SafeAreaView
 import { useRouter, useFocusEffect } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { Colors } from '@/constants/Colors';
@@ -56,32 +57,6 @@ export default function PanenScreen() {
     loadHarvestData();
   };
 
-  const handleAddHarvest = async () => {
-    // Get plants that are ready to harvest
-    const allPlants = await plantService.getPlants();
-    const readyPlants = allPlants.filter(plant => plant.status === 'growing' && plant.daysLeft <= 7);
-    
-    if (readyPlants.length === 0) {
-      Alert.alert(
-        'Tidak Ada Tanaman Siap Panen',
-        'Semua tanaman masih dalam masa tumbuh. Periksa kembali dalam beberapa hari.',
-        [{ text: 'OK' }]
-      );
-      return;
-    }
-
-    // Navigate to first ready plant or show selection
-    if (readyPlants.length === 1) {
-      router.push(`/harvest-plant/${readyPlants[0].id}`);
-    } else {
-      Alert.alert(
-        'Pilih Tanaman',
-        `Ada ${readyPlants.length} tanaman yang siap dipanen. Pilih dari daftar tanaman.`,
-        [{ text: 'OK', onPress: () => router.push('/(tabs)/ditanam') }]
-      );
-    }
-  };
-
   const handleHarvestDetail = (harvest: HarvestRecord) => {
     Alert.alert(
       'Detail Panen',
@@ -118,10 +93,12 @@ export default function PanenScreen() {
 
   return (
     <View style={styles.container}>
-      {/* Header */}
-      <View style={styles.header}>
-        <Text style={styles.title}>Hasil Panen</Text>
-      </View>
+      {/* Header Wrapped in SafeAreaView */}
+      <SafeAreaView edges={['top']} style={{ backgroundColor: Colors.primary }}>
+        <View style={styles.header}>
+          <Text style={styles.title}>Hasil Panen</Text>
+        </View>
+      </SafeAreaView>
 
       {/* Content */}
       <ScrollView 
@@ -189,7 +166,7 @@ export default function PanenScreen() {
             <Ionicons name="basket-outline" size={64} color={Colors.textLight} />
             <Text style={styles.emptyStateText}>Belum Ada Hasil Panen</Text>
             <Text style={styles.emptyStateSubtext}>
-              Tanaman Anda masih dalam masa pertumbuhan. Pantau perkembangan di halaman "Ditanam"
+              Tanaman Anda masih dalam masa pertumbuhan. Pantau perkembangan di halaman &quot;Ditanam&quot;
             </Text>
           </View>
         )}
@@ -229,7 +206,7 @@ const styles = StyleSheet.create({
   header: {
     backgroundColor: Colors.primary,
     padding: 20,
-    paddingTop: 60,
+    // paddingTop: 60, // Removed manual padding
   },
   title: {
     color: Colors.white,

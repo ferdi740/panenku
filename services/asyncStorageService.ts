@@ -138,26 +138,28 @@ export const asyncStorageService = {
         return [];
       }
 
-      let plants = JSON.parse(plantsJSON);
-      
-      // Repair dan validasi semua plants
-      let repaired = false;
-      plants = plants.map((plant: any, index: number) => {
+      let plants: Plant[] = JSON.parse(plantsJSON);
+
+      // Validasi dan perbaikan data
+      const validatedPlants = plants.map((plant, index) => {
         if (!validatePlant(plant)) {
-          repaired = true;
+          console.warn('⚠️ Invalid plant data found, repairing...', plant);
           return repairPlant(plant, index);
         }
-        // Update daysLeft untuk semua plants
-        return updateDaysLeft(plant);
+        return plant;
       });
 
-      // Save repaired data jika ada
-      if (repaired) {
-        await AsyncStorage.setItem(PLANTS_KEY, JSON.stringify(plants));
-        console.log('🔧 PLANTS - Repaired corrupt data');
+      // Update daysLeft dan progress untuk setiap tanaman
+      const updatedPlants = validatedPlants.map(updateDaysLeft);
+
+      // Simpan kembali data yang sudah diperbarui jika ada perubahan
+      if (JSON.stringify(updatedPlants) !== JSON.stringify(plants)) {
+        await AsyncStorage.setItem(PLANTS_KEY, JSON.stringify(updatedPlants));
+        console.log('🔄 Plant data has been updated with latest progress.');
       }
 
-      return plants;
+      // Urutkan tanaman berdasarkan `daysLeft` (soonest first)
+      return updatedPlants.sort((a, b) => a.daysLeft - b.daysLeft);
     } catch (error) {
       console.error('❌ GET PLANTS - Error:', error);
       return [];
@@ -169,7 +171,7 @@ export const asyncStorageService = {
     try {
       const plants = await asyncStorageService.getPlants();
       const plant = plants.find(p => String(p.id) === String(id));
-      return plant ? updateDaysLeft(plant) : null;
+      return plant || null;
     } catch (error) {
       console.error('❌ GET PLANT BY ID - Error:', error);
       return null;
@@ -182,7 +184,6 @@ export const asyncStorageService = {
       const plants = await asyncStorageService.getPlants();
       return plants
         .filter(plant => plant.status === status)
-        .map(plant => updateDaysLeft(plant));
     } catch (error) {
       console.error('❌ GET PLANTS BY STATUS - Error:', error);
       return [];
@@ -208,11 +209,6 @@ export const asyncStorageService = {
         updatedAt: new Date().toISOString(),
       };
 
-      // If dates changed, recalculate daysLeft and progress
-      if (plantData.plantedDate || plantData.harvestDate) {
-        updatedPlant = updateDaysLeft(updatedPlant);
-      }
-
       plants[index] = updatedPlant;
       await AsyncStorage.setItem(PLANTS_KEY, JSON.stringify(plants));
       
@@ -227,41 +223,18 @@ export const asyncStorageService = {
   // DELETE - Hapus tanaman
   deletePlant: async (id: string): Promise<boolean> => {
     try {
-      const targetId = String(id).trim();
-      console.log('🔄 DELETE PLANT - Attempting to delete:', targetId);
-      
       const plants = await asyncStorageService.getPlants();
-      console.log('📊 DELETE PLANT - Total plants before:', plants.length);
-      console.log('🔍 DELETE PLANT - Looking for ID:', targetId, 'Type:', typeof targetId);
-      console.log('🔍 DELETE PLANT - Available IDs:', plants.map(p => ({ id: String(p.id).trim(), idType: typeof p.id, name: p.name })));
+      const initialLength = plants.length;
       
-      // Filter out the plant with matching ID (case-insensitive and trimmed)
-      const filteredPlants = plants.filter(plant => {
-        const plantId = String(plant.id).trim();
-        const matches = plantId !== targetId;
-        if (!matches) {
-          console.log('🎯 DELETE PLANT - Found matching plant:', plant.name, 'ID:', plantId);
-        }
-        return matches;
-      });
+      const updatedPlants = plants.filter(plant => String(plant.id) !== String(id));
       
-      if (filteredPlants.length < plants.length) {
-        await AsyncStorage.setItem(PLANTS_KEY, JSON.stringify(filteredPlants));
-        console.log('✅ DELETE PLANT - Success! Removed:', plants.length - filteredPlants.length, 'plant(s)');
-        console.log('📊 DELETE PLANT - Total plants after:', filteredPlants.length);
-        
-        // Verify deletion
-        const verifyPlants = await asyncStorageService.getPlants();
-        const stillExists = verifyPlants.some(p => String(p.id).trim() === targetId);
-        if (stillExists) {
-          console.error('❌ DELETE PLANT - Plant still exists after deletion!');
-          return false;
-        }
-        
+      if (updatedPlants.length < initialLength) {
+        await AsyncStorage.setItem(PLANTS_KEY, JSON.stringify(updatedPlants));
+        console.log('✅ DELETE PLANT - Success, ID:', id);
         return true;
       }
       
-      console.log('⚠️ DELETE PLANT - Plant not found for deletion. No matching ID found.');
+      console.log('⚠️ DELETE PLANT - Plant not found, ID:', id);
       return false;
     } catch (error) {
       console.error('❌ DELETE PLANT - Error:', error);

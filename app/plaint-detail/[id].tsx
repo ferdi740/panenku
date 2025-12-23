@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { 
   View, 
   Text, 
@@ -8,8 +8,10 @@ import {
   TouchableOpacity, 
   Alert,
   ActivityIndicator,
-  Modal
+  Modal,
+  TouchableWithoutFeedback
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { Colors } from '@/constants/Colors';
@@ -21,33 +23,26 @@ export default function PlantDetailScreen() {
   const [plant, setPlant] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [imageError, setImageError] = useState(false);
+  
+  // State Modals
   const [showHarvestModal, setShowHarvestModal] = useState(false);
+  const [showDeleteModal, setShowDeleteModal] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
 
   // Extract plant ID
   const plantId = typeof id === 'string' ? id : 
-                 Array.isArray(id) ? id[0] : 
-                 (id as any);
+                  Array.isArray(id) ? id[0] : 
+                  (id as any);
 
-  // ✅ DEBUG: Log routing parameters
-  console.log('🔄 PLANT DETAIL - Route params:', { id });
-  console.log('🔄 PLANT DETAIL - Full URL:', `/plant-detail/${id}`);
-
-  useEffect(() => {
-    console.log('🎯 PLANT DETAIL - Component mounted, loading plant...');
-    loadPlant();
-  }, [id]);
-
-  const loadPlant = async () => {
+  const loadPlant = useCallback(async () => {
     try {
       console.log('📡 PLANT DETAIL - Loading plant with ID:', id);
       const plantData = await plantService.getPlantById(id as string);
       
       if (plantData) {
-        console.log('✅ PLANT DETAIL - Plant loaded successfully:', plantData.name);
         setPlant(plantData);
-        setImageError(false); // Reset error state when loading new plant
+        setImageError(false);
       } else {
-        console.log('❌ PLANT DETAIL - Plant not found');
         Alert.alert('Error', 'Tanaman tidak ditemukan');
         router.back();
       }
@@ -57,67 +52,47 @@ export default function PlantDetailScreen() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [id, router]);
+
+  useEffect(() => {
+    loadPlant();
+  }, [id, loadPlant]);
 
   const handleEdit = () => {
     router.push(`/edit-plant/${plantId}`);
   };
 
-  const handleDeletePlant = () => {
-    if (!plant || !plantId) {
-      Alert.alert('Error', 'Data tanaman tidak tersedia');
-      return;
-    }
-
-    Alert.alert(
-      'Hapus Tanaman',
-      `Apakah Anda yakin ingin menghapus ${plant.name}?`,
-      [
-        { text: 'Batal', style: 'cancel' },
-        { 
-          text: 'Hapus', 
-          style: 'destructive',
-          onPress: deletePlant
-        }
-      ]
-    );
+  // 1. Trigger Modal Hapus
+  const handleDeletePress = () => {
+    if (!plant || !plantId) return;
+    setShowDeleteModal(true);
   };
 
-  const deletePlant = async () => {
-    if (!plantId || plantId === 'undefined') {
-      Alert.alert('Error', 'ID tanaman tidak valid');
-      return;
-    }
-
+  // 2. Eksekusi Hapus
+  const confirmDelete = async () => {
+    setIsDeleting(true);
     try {
-      console.log('🗑️ PLANT DETAIL - Deleting plant with ID:', plantId);
       const success = await plantService.deletePlant(plantId);
       
       if (success) {
-        console.log('✅ PLANT DETAIL - Plant deleted successfully');
-        Alert.alert(
-          'Berhasil!', 
-          'Tanaman berhasil dihapus!',
-          [
-            { 
-              text: 'OK', 
-              onPress: () => router.push('/(tabs)/ditanam')
-            }
-          ]
-        );
+        setShowDeleteModal(false);
+        // Bisa ganti Alert ini dengan notifikasi custom jika ada context-nya
+        Alert.alert('Berhasil', 'Tanaman berhasil dihapus', [
+          { text: 'OK', onPress: () => router.push('/(tabs)/ditanam') }
+        ]);
       } else {
         Alert.alert('Error', 'Gagal menghapus tanaman');
+        setIsDeleting(false);
       }
     } catch (error) {
       console.error('❌ PLANT DETAIL - Error deleting plant:', error);
       Alert.alert('Error', 'Gagal menghapus tanaman. Coba lagi.');
+      setIsDeleting(false);
     }
   };
 
   const handleHarvest = () => {
     if (!plant) return;
-    
-    // Show harvest modal popup
     setShowHarvestModal(true);
   };
 
@@ -128,8 +103,6 @@ export default function PlantDetailScreen() {
           <TouchableOpacity 
             onPress={() => router.back()} 
             style={styles.backButton}
-            hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-            activeOpacity={0.7}
           >
             <Ionicons name="arrow-back" size={24} color={Colors.white} />
           </TouchableOpacity>
@@ -145,8 +118,13 @@ export default function PlantDetailScreen() {
   }
 
   if (!plant) {
-    return (
-      <View style={styles.container}>
+    return null;
+  }
+
+  return (
+    <View style={styles.container}>
+      {/* 3. Safe Area Wrapper dengan background warna Primary */}
+      <SafeAreaView edges={['top']} style={{ backgroundColor: Colors.primary }}>
         <View style={styles.header}>
           <TouchableOpacity 
             onPress={() => router.back()} 
@@ -156,46 +134,29 @@ export default function PlantDetailScreen() {
           >
             <Ionicons name="arrow-back" size={24} color={Colors.white} />
           </TouchableOpacity>
+          
           <Text style={styles.headerTitle}>Detail Tanaman</Text>
-          <View style={styles.placeholder} />
+          
+          <View style={styles.headerActions}>
+            <TouchableOpacity 
+              onPress={handleEdit} 
+              style={styles.editButton}
+              hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+              activeOpacity={0.7}
+            >
+              <Ionicons name="create-outline" size={24} color={Colors.white} />
+            </TouchableOpacity>
+            <TouchableOpacity 
+              onPress={handleDeletePress} 
+              style={styles.deleteButton}
+              hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+              activeOpacity={0.7}
+            >
+              <Ionicons name="trash-outline" size={24} color={Colors.white} />
+            </TouchableOpacity>
+          </View>
         </View>
-        <View style={styles.errorContainer}>
-          <Ionicons name="alert-circle-outline" size={64} color={Colors.textLight} />
-          <Text style={styles.errorText}>Tanaman tidak ditemukan</Text>
-          <TouchableOpacity 
-            style={styles.backButtonPrimary}
-            onPress={() => router.back()}
-            activeOpacity={0.8}
-          >
-            <Text style={styles.backButtonText}>Kembali</Text>
-          </TouchableOpacity>
-        </View>
-      </View>
-    );
-  }
-
-  return (
-    <View style={styles.container}>
-      {/* Header */}
-      <View style={styles.header}>
-        <TouchableOpacity 
-          onPress={() => router.back()} 
-          style={styles.backButton}
-          hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-          activeOpacity={0.7}
-        >
-          <Ionicons name="arrow-back" size={24} color={Colors.white} />
-        </TouchableOpacity>
-        <Text style={styles.headerTitle}>Detail Tanaman</Text>
-        <TouchableOpacity 
-          onPress={handleEdit} 
-          style={styles.editButton}
-          hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-          activeOpacity={0.7}
-        >
-          <Ionicons name="create-outline" size={24} color={Colors.white} />
-        </TouchableOpacity>
-      </View>
+      </SafeAreaView>
 
       <ScrollView style={styles.scrollView} showsVerticalScrollIndicator={false}>
         {!imageError && plant.image ? (
@@ -268,19 +229,19 @@ export default function PlantDetailScreen() {
             <View style={styles.careList}>
               <View style={styles.careItem}>
                 <Ionicons name="water-outline" size={20} color={Colors.primary} />
-                <Text style={styles.careText}>Penyiraman: {plant.care.water}</Text>
+                <Text style={styles.careText}>Penyiraman: {plant.care?.water || '-'}</Text>
               </View>
               <View style={styles.careItem}>
                 <Ionicons name="sunny-outline" size={20} color={Colors.primary} />
-                <Text style={styles.careText}>Sinar Matahari: {plant.care.sun}</Text>
+                <Text style={styles.careText}>Sinar Matahari: {plant.care?.sun || '-'}</Text>
               </View>
               <View style={styles.careItem}>
                 <Ionicons name="earth-outline" size={20} color={Colors.primary} />
-                <Text style={styles.careText}>Tanah: {plant.care.soil}</Text>
+                <Text style={styles.careText}>Tanah: {plant.care?.soil || '-'}</Text>
               </View>
               <View style={styles.careItem}>
                 <Ionicons name="nutrition-outline" size={20} color={Colors.primary} />
-                <Text style={styles.careText}>Pupuk: {plant.care.fertilizer}</Text>
+                <Text style={styles.careText}>Pupuk: {plant.care?.fertilizer || '-'}</Text>
               </View>
             </View>
           </View>
@@ -314,7 +275,6 @@ export default function PlantDetailScreen() {
             </View>
           )}
           
-          {/* Bottom spacing for fixed button */}
           <View style={styles.bottomSpacing} />
         </View>
       </ScrollView>
@@ -356,6 +316,51 @@ export default function PlantDetailScreen() {
           </View>
         </Modal>
       )}
+
+      {/* --- CUSTOM DELETE MODAL --- */}
+      <Modal
+        transparent={true}
+        visible={showDeleteModal}
+        animationType="fade"
+        onRequestClose={() => !isDeleting && setShowDeleteModal(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContent}>
+            <View style={styles.deleteIconContainer}>
+               <Ionicons name="trash-outline" size={48} color={Colors.danger} />
+            </View>
+
+            <Text style={styles.modalTitle}>Hapus Tanaman?</Text>
+            <Text style={styles.modalTextCenter}>
+              Apakah Anda yakin ingin menghapus <Text style={{fontWeight:'bold'}}>{plant.name}</Text>? 
+              {"\n"}Data yang dihapus tidak dapat dikembalikan.
+            </Text>
+
+            <View style={styles.modalButtonsRow}>
+              <TouchableOpacity
+                style={styles.cancelButton}
+                onPress={() => setShowDeleteModal(false)}
+                disabled={isDeleting}
+              >
+                <Text style={styles.cancelButtonText}>Batal</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={styles.confirmDeleteButton}
+                onPress={confirmDelete}
+                disabled={isDeleting}
+              >
+                {isDeleting ? (
+                  <ActivityIndicator color={Colors.white} size="small" />
+                ) : (
+                  <Text style={styles.confirmDeleteButtonText}>Hapus</Text>
+                )}
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
     </View>
   );
 }
@@ -374,7 +379,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'space-between',
     padding: 16,
-    paddingTop: 60,
+    // paddingTop dihapus karena sudah dihandle SafeAreaView
   },
   backButton: {
     padding: 4,
@@ -617,6 +622,7 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     marginLeft: 8,
   },
+  // Modal Styles
   modalOverlay: {
     flex: 1,
     backgroundColor: 'rgba(0, 0, 0, 0.5)',
@@ -630,12 +636,14 @@ const styles = StyleSheet.create({
     padding: 24,
     width: '100%',
     maxWidth: 400,
+    alignItems: 'center', // Center for delete modal
   },
   modalTitle: {
     fontSize: 18,
     fontWeight: 'bold',
     color: Colors.text,
     marginBottom: 12,
+    textAlign: 'center',
   },
   modalText: {
     fontSize: 14,
@@ -648,8 +656,55 @@ const styles = StyleSheet.create({
     paddingVertical: 12,
     borderRadius: 8,
     alignItems: 'center',
+    width: '100%',
   },
   modalButtonText: {
+    color: Colors.white,
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  
+  // Custom Delete Modal Specifics
+  deleteIconContainer: {
+    marginBottom: 16,
+    backgroundColor: '#FEE2E2', // Light red
+    padding: 16,
+    borderRadius: 50,
+  },
+  modalTextCenter: {
+    fontSize: 14,
+    color: Colors.textLight,
+    lineHeight: 22,
+    marginBottom: 24,
+    textAlign: 'center',
+  },
+  modalButtonsRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    width: '100%',
+    gap: 12,
+  },
+  cancelButton: {
+    flex: 1,
+    paddingVertical: 12,
+    borderRadius: 12,
+    backgroundColor: '#F3F4F6', // Light gray
+    alignItems: 'center',
+  },
+  cancelButtonText: {
+    color: Colors.text,
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  confirmDeleteButton: {
+    flex: 1,
+    paddingVertical: 12,
+    borderRadius: 12,
+    backgroundColor: Colors.danger,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  confirmDeleteButtonText: {
     color: Colors.white,
     fontSize: 16,
     fontWeight: '600',
